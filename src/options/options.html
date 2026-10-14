@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>设置 · JD 投递追踪</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="head">
+    <img src="../../icons/icon48.png" alt="">
+    <div>
+      <h1>JD 投递追踪 · 设置</h1>
+      <p>截图识别岗位 JD，自动记录投递进度</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. 模型接口</h2>
+      <p class="desc">默认使用 DeepSeek 的 <code>deepseek-flash</code>（已确认支持读图）。任何兼容 OpenAI 协议、支持 <code>image_url</code> 的接口都可以填在这里。</p>
+      <div class="grid">
+        <label class="field full">
+          <span>接口地址 baseURL</span>
+          <input id="apiBase" placeholder="https://api.deepseek.com">
+          <em>填到 <code>/v1</code> 或站点根地址都行，扩展会自动补 <code>/chat/completions</code>。</em>
+        </label>
+        <label class="field full">
+          <span>API Key</span>
+          <div class="row">
+            <input id="apiKey" type="password" placeholder="sk-…" autocomplete="off">
+            <button class="btn" id="toggle-key" type="button">显示</button>
+          </div>
+          <em>只保存在本机浏览器（chrome.storage.local），不会上传到任何第三方。</em>
+        </label>
+        <label class="field">
+          <span>模型名</span>
+          <input id="model" placeholder="deepseek-flash">
+        </label>
+        <label class="field">
+          <span>最大输出 tokens</span>
+          <input id="maxTokens" type="number" min="512" max="32000" step="256">
+        </label>
+        <label class="field">
+          <span>请求超时（秒）</span>
+          <input id="timeoutMs" type="number" min="15" max="600" step="5">
+        </label>
+      </div>
+
+      <div class="row gap">
+        <button class="btn btn-primary" id="test">测试连接</button>
+        <button class="btn" id="grant">授权访问该域名</button>
+        <span class="status" id="perm-status"></span>
+      </div>
+      <div class="result" id="test-result" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>2. 截图与记录</h2>
+      <div class="grid">
+        <label class="field">
+          <span>截图最长边（px）</span>
+          <input id="cropMaxSide" type="number" min="600" max="4000" step="100">
+          <em>越大越清晰，但识别更慢更贵。</em>
+        </label>
+        <label class="field">
+          <span>截图 JPEG 质量</span>
+          <input id="cropQuality" type="number" min="0.4" max="1" step="0.05">
+        </label>
+        <label class="field">
+          <span>默认状态</span>
+          <select id="defaultStatus"></select>
+        </label>
+        <label class="field">
+          <span>最多保留截图条数</span>
+          <input id="maxStoredScreenshots" type="number" min="0" max="5000" step="10">
+          <em>超出后只删旧截图，记录本身保留。</em>
+        </label>
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" id="keepScreenshot"> 保存截图（可在详情里回看原始 JD）</label>
+        <label class="check"><input type="checkbox" id="warnDuplicate"> 保存时提示疑似重复记录</label>
+        <label class="check"><input type="checkbox" id="closePanelAfterSave"> 保存后自动关闭页内面板</label>
+        <label class="check"><input type="checkbox" id="autoOpenDashboard"> 保存后自动打开进度表</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. 状态词表</h2>
+      <p class="desc">每行一个状态，格式 <code>名称|颜色</code>。改完记得保存。</p>
+      <textarea id="statuses" rows="8" spellcheck="false"></textarea>
+      <div class="row gap">
+        <button class="btn" id="reset-statuses">恢复默认状态</button>
+        <span class="status" id="statuses-hint"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. 识别提示词</h2>
+      <p class="desc">决定模型从截图里抽哪些字段。<code>{{pageTitle}}</code>、<code>{{pageUrl}}</code> 会以辅助上下文的形式自动附加。</p>
+      <textarea id="promptTemplate" rows="16" spellcheck="false"></textarea>
+      <div class="row gap">
+        <button class="btn" id="reset-prompt">恢复默认提示词</button>
+        <span class="status" id="prompt-hint"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5. 数据</h2>
+      <div class="row gap wrap">
+        <button class="btn" id="export-json">导出全部数据（JSON）</button>
+        <button class="btn" id="export-csv">导出 CSV</button>
+        <button class="btn" id="export-md">导出 Markdown</button>
+        <button class="btn" id="import">导入 JSON 备份</button>
+        <input type="file" id="file" accept=".json" hidden>
+        <button class="btn btn-danger" id="clear">清空全部记录</button>
+      </div>
+      <p class="desc" id="storage-info"></p>
+    </section>
+
+    <section class="card">
+      <h2>6. 快捷键</h2>
+      <ul class="keys">
+        <li><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> 框选截图识别</li>
+        <li><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> 整屏截图识别</li>
+        <li><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> 打开投递进度表</li>
+      </ul>
+      <p class="desc">想改键位，去 <code>chrome://extensions/shortcuts</code>。也可以右键网页 → 「记录这个岗位」。</p>
+      <div class="row gap">
+        <button class="btn" id="open-dashboard">打开投递进度表</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="save-hint">改动会自动保存</span>
+    <button class="btn btn-primary" id="save">保存全部设置</button>
+  </footer>
+
+  <div class="toast-wrap" id="toasts"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "JD 投递追踪",
+  "short_name": "JD追踪",
+  "version": "1.0.0",
+  "description": "截图识别招聘 JD，自动记录投递岗位与时间；统计投递状态，随时手动更新进度。",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "JD 投递追踪（Alt+Shift+J 框选识别）",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://api.deepseek.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "commands": {
+    "capture-region": {
+      "suggested_key": { "default": "Alt+Shift+J", "mac": "Alt+Shift+J" },
+      "description": "框选截图并识别 JD"
+    },
+    "capture-viewport": {
+      "suggested_key": { "default": "Alt+Shift+K", "mac": "Alt+Shift+K" },
+      "description": "整屏截图并识别 JD"
+    },
+    "open-dashboard": {
+      "suggested_key": { "default": "Alt+Shift+L", "mac": "Alt+Shift+L" },
+      "description": "打开投递进度表"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

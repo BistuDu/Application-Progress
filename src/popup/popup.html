@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>JD 投递追踪</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <img src="../../icons/icon32.png" alt="" class="logo">
+    <div class="titles">
+      <h1>JD 投递追踪</h1>
+      <p id="subtitle">截图识别岗位，自动记录进度</p>
+    </div>
+    <button class="icon-btn" id="btn-options" title="设置">⚙</button>
+  </header>
+
+  <div class="setup" id="setup" hidden>
+    <strong>还差一步</strong>
+    <p>填写模型 API Key 后即可识别截图。</p>
+    <button class="btn btn-primary" id="btn-goto-options">打开设置</button>
+  </div>
+
+  <main id="main">
+    <div class="actions">
+      <button class="btn btn-primary big" id="btn-region">
+        <span class="ico">⬚</span>
+        <span class="txt"><b>框选识别 JD</b><em>拖拽选中 JD 区域 · <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd></em></span>
+      </button>
+      <button class="btn big" id="btn-viewport">
+        <span class="ico">▣</span>
+        <span class="txt"><b>整屏识别 JD</b><em>直接截当前整屏 · <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></em></span>
+      </button>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <section class="recent">
+      <div class="row-between">
+        <h2>最近记录</h2>
+        <button class="link" id="btn-dashboard">打开进度表 →</button>
+      </div>
+      <div id="recent-list" class="list"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="foot-tip">在招聘页面点击上方按钮即可记录</span>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

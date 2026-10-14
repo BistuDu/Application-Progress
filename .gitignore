@@ -1,0 +1,8 @@
+# 临时产物：e2e 截图、导出样例
+tmp/
+
+# macOS
+.DS_Store
+
+# 打包产物（由 scripts 生成）
+dist/*.pem
