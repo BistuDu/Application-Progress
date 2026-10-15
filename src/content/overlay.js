@@ -15,6 +15,8 @@
   const state = {
     phase: 'idle', // idle | selecting | processing | review | done
     mode: 'region',
+    // 'job' = 岗位投递（原有流程）；'technical-question' = 八股文题目（交给知识库页面核对）
+    target: 'job',
     dataUrl: '',
     settings: {},
     statuses: [],
@@ -69,12 +71,12 @@
 
   const STATUS_FALLBACK = [
     { name: '已投递', color: '#3b82f6' },
-    { name: '筛选中', color: '#8b5cf6' },
     { name: '测评中', color: '#f59e0b' },
-    { name: '面试', color: '#06b6d4' },
+    { name: '一面', color: '#06b6d4' },
+    { name: '二面', color: '#0891b2' },
+    { name: '三面', color: '#0e7490' },
+    { name: 'HR面', color: '#14b8a6' },
     { name: 'Offer', color: '#10b981' },
-    { name: '拒绝/已结束', color: '#ef4444' },
-    { name: '待确认', color: '#94a3b8' },
   ];
 
   function statusColor(name) {
@@ -230,6 +232,8 @@
 
   function unmount() {
     clearInterval(state.timer);
+    clearTimeout(state.endTimer);
+    state.captureGeneration = (state.captureGeneration || 0) + 1;
     state.timer = null;
     if (host?.parentNode) host.parentNode.removeChild(host);
     host = null;
@@ -237,10 +241,15 @@
     img = null;
     document.removeEventListener('keydown', onKeyDown, true);
     state.phase = 'idle';
+    clearTimeout(state.watchdog);
+    state.requestId = '';
+    globalThis.__JDT_ISLAND__?.phase('idle');
+    if (state.pendingIslandFeedback) { globalThis.__JDT_ISLAND__?.terminal(state.pendingIslandFeedback, true); state.pendingIslandFeedback = ''; }
   }
 
   function setPhase(p) {
     state.phase = p;
+    if (p !== 'processing') globalThis.__JDT_ISLAND__?.phase(p);
   }
 
   /* ---------------------------------------------------------------- */
@@ -251,6 +260,8 @@
     mount();
     setPhase('selecting');
     state.dataUrl = dataUrl;
+    state.captureGeneration = (state.captureGeneration || 0) + 1;
+    const isQuestion = state.target === 'technical-question';
 
     if (mode === 'viewport') {
       state.crop = dataUrl;
@@ -264,7 +275,7 @@
       <div class="cursor-cross" id="jdt-cross"></div>
       <div class="sel" id="jdt-sel" hidden><div class="sel-size" id="jdt-size"></div></div>
       <div class="tipbar">
-        <span>拖拽框选 JD 区域</span>
+        <span>${isQuestion ? '拖拽框选题目区域' : '拖拽框选 JD 区域'}</span>
         <span><span class="kbd">Enter</span> 整屏</span>
         <span><span class="kbd">Esc</span> 取消</span>
         <button class="btn-lite" id="jdt-full">使用整屏</button>
@@ -312,9 +323,13 @@
         <h3>正在裁剪…</h3>
         <p>马上交给模型识别</p>
       </div></div>`;
-      const cropped = await cropToDataUrl(rect);
-      state.crop = cropped;
-      startAnalysis(cropped);
+      const generation = state.captureGeneration;
+      try {
+        const cropped = await cropToDataUrl(rect);
+        if (state.captureGeneration !== generation) return;
+        state.crop = cropped;
+        startAnalysis(cropped);
+      } catch (error) { if (state.captureGeneration === generation) showError(`截图裁剪失败：${error.message}`, { retryable: false }); }
     };
 
     const onDown = (e) => {
@@ -400,50 +415,62 @@
     state.startedAt = Date.now();
     state.requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     state.crop = image;
-
-    root.innerHTML = `
-      <div class="center"><div class="card">
-        <div class="spinner"></div>
-        <h3>${esc(state.settings.model || 'deepseek-flash')} 正在识别 JD 截图</h3>
-        <p id="jdt-elapsed">已用 0.0 秒 · 通常 3-10 秒</p>
-        <img class="thumb-sm" src="${esc(image)}" alt="">
-        <div class="mt14"><button class="btn btn-ghost" id="jdt-abort">取消识别</button></div>
-      </div></div>`;
-
-    const elapsed = el('#jdt-elapsed');
-    state.timer = setInterval(() => {
-      if (!elapsed) return;
-      const s = ((Date.now() - state.startedAt) / 1000).toFixed(1);
-      elapsed.textContent = `已用 ${s} 秒 · 通常 3-10 秒`;
-    }, 200);
-
-    el('#jdt-abort').addEventListener('click', abortAnalysis);
-
+    refreshProcessing();
+    clearTimeout(state.watchdog);
+    const id = state.requestId;
+    state.watchdog = setTimeout(() => {
+      if (state.phase !== 'processing' || state.requestId !== id) return;
+      state.requestId = '';
+      send({ type: 'ANALYZE_ABORT', requestId: id });
+      showError('识别结果未按时返回，请检查连接后重试。', { retryable: true });
+    }, Math.max(1000, Number(state.settings.timeoutMs) || 120000) + 5000);
     const res = await send({
       type: 'ANALYZE',
       requestId: state.requestId,
+      target: state.target,
       image,
       pageTitle: document.title,
       pageUrl: location.href,
     });
-    if (!res.ok) showError(res.error || '识别失败。', res);
+    if (!res.ok && state.requestId === id && state.phase === 'processing') showError(res.error || '识别失败。', res);
   }
 
+  function refreshProcessing() {
+    if (state.phase !== 'processing' || !state.requestId || !root) return;
+    const visible = globalThis.__JDT_ISLAND__?.phase('processing', {
+      id: state.requestId, target: state.target, startedAt: state.startedAt, cancel: abortAnalysis,
+    });
+    clearInterval(state.timer);
+    if (visible) { root.innerHTML = ''; return; }
+    root.innerHTML = `<div class="center"><div class="card"><div class="spinner"></div>
+      <h3>${esc(state.settings.model || 'deepseek-flash')} 正在识别 ${state.target === 'technical-question' ? '题目' : 'JD'} 截图</h3>
+      <p id="jdt-elapsed"></p><img class="thumb-sm" src="${esc(state.crop)}" alt="">
+      <div class="mt14"><button class="btn btn-ghost" id="jdt-abort">取消识别</button></div></div></div>`;
+    const tick = () => { const e = el('#jdt-elapsed'); if (e) e.textContent = `已用 ${((Date.now() - state.startedAt) / 1000).toFixed(1)} 秒`; };
+    tick(); state.timer = setInterval(tick, 200); el('#jdt-abort').addEventListener('click', abortAnalysis);
+  }
   async function abortAnalysis() {
     const id = state.requestId;
-    clearInterval(state.timer);
-    state.timer = null;
+    // 先使本地任务失效；即使 worker 回执迟到，也不能打开新的核对。
+    unmount();
+    globalThis.__JDT_ISLAND__?.terminal('已取消识别', true);
     if (id) await send({ type: 'ANALYZE_ABORT', requestId: id });
-    toast('已取消识别', []);
   }
+  globalThis.__JDT_OVERLAY_BRIDGE__ = { refreshProcessing, busy: () => ['selecting','processing','review'].includes(state.phase) };
 
   function onResult(msg) {
-    if (msg.requestId && state.requestId && msg.requestId !== state.requestId) return;
-    if (state.phase === 'done' || state.phase === 'idle') return;
+    if (!state.requestId || msg.requestId !== state.requestId || state.phase !== 'processing') return;
+    clearTimeout(state.watchdog);
+    state.requestId = '';
     clearInterval(state.timer);
     state.timer = null;
     if (!msg.ok) {
       showError(msg.error || '识别失败。', msg);
+      return;
+    }
+    // 八股文题目：候选已经交接给知识库页面，这里只做一次性提示
+    if (msg.target === 'technical-question') {
+      showHandoff(msg);
       return;
     }
     state.result = msg.result;
@@ -452,9 +479,40 @@
     showReview();
   }
 
+  /** 题目识别完成：提示已经打开知识库页面继续核对，然后自动收起。 */
+  function showHandoff(msg) {
+    mount();
+    setPhase('done');
+    globalThis.__JDT_ISLAND__?.terminal('已识别，待核对', true);
+    const n = Number(msg.count) || 0;
+    root.innerHTML = `
+      <div class="center"><div class="card">
+        <h3>已提取 ${n} 道题</h3>
+        <p style="text-align:left;margin-top:8px">候选已交给知识库页面，请在那里逐条核对后保存。截图不会被保存。</p>
+        <div class="mt14" style="display:flex;gap:8px;justify-content:center">
+          <button class="btn btn-primary" id="jdt-open-kb">打开知识库</button>
+          <button class="btn btn-ghost" id="jdt-close-kb">关闭</button>
+        </div>
+      </div></div>`;
+    el('#jdt-open-kb').addEventListener('click', () => {
+      send({ type: 'OPEN_KNOWLEDGE' });
+      unmount();
+    });
+    el('#jdt-close-kb').addEventListener('click', unmount);
+    clearTimeout(state.endTimer);
+    state.endTimer = setTimeout(() => {
+      if (state.phase === 'done') unmount();
+    }, 5200);
+  }
+
   function showError(message, meta = {}) {
     mount();
-    setPhase('processing');
+    clearTimeout(state.watchdog);
+    clearInterval(state.timer);
+    state.requestId = '';
+    setPhase('error');
+    globalThis.__JDT_ISLAND__?.phase('error');
+    globalThis.__JDT_ISLAND__?.terminal(message, false);
     const canRetry = meta.retryable !== false;
     const detail = meta.detail ? `<div class="summary" style="text-align:left;word-break:break-all;max-height:90px;overflow:auto">${esc(meta.detail)}</div>` : '';
     root.innerHTML = `
@@ -487,6 +545,7 @@
   function showReview() {
     mount();
     setPhase('review');
+    state.pendingIslandFeedback = '已识别，待核对';
     const r = state.result || {};
     const status = state.settings.defaultStatus || '已投递';
     const color = statusColor(status);
@@ -614,7 +673,8 @@
     el('#jdt-cancel').addEventListener('click', unmount);
     el('#jdt-recapture').addEventListener('click', async () => {
       unmount();
-      await send({ type: 'RECAPTURE', mode: 'region' });
+      const res = await send({ type: 'RECAPTURE', mode: 'region', target: state.target });
+      if (!res.ok) globalThis.__JDT_ISLAND__?.terminal(res.error || '重新截图失败', false);
     });
     el('#jdt-preview')?.addEventListener('click', () => {
       root.insertAdjacentHTML('beforeend', `<div class="zoom" id="jdt-zoom"><img src="${esc(state.crop)}" alt=""></div>`);
@@ -686,6 +746,7 @@
       return;
     }
     setPhase('done');
+    state.pendingIslandFeedback = '已保存投递记录';
     const dupNote = res.duplicates?.length ? `（已有 ${res.duplicates.length + 1} 条相似记录）` : '';
     const openDash = async () => {
       await send({ type: 'AFTER_SAVE', openDashboard: true });
@@ -700,7 +761,8 @@
       { label: '撤销', onClick: async () => { await send({ type: 'DELETE_RECORDS', ids: [res.record.id] }); unmount(); } },
     ], state.settings.closePanelAfterSave ? 4200 : 0);
     if (state.settings.closePanelAfterSave) {
-      setTimeout(() => {
+      clearTimeout(state.endTimer);
+      state.endTimer = setTimeout(() => {
         if (state.phase === 'done') unmount();
       }, 4200);
     }
@@ -761,18 +823,20 @@
   /* 消息                                                              */
   /* ---------------------------------------------------------------- */
 
-  chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  const messageListener = (msg, sender, respond) => {
     if (!msg || typeof msg.type !== 'string') return false;
     if (msg.type === 'JDT_PING') {
-      respond({ pong: true });
+      respond({ pong: true, busy: ['selecting','processing','review'].includes(state.phase) });
       return false;
     }
     if (msg.type === 'JDT_SHOW_SELECTOR') {
+      state.target = msg.target === 'technical-question' ? 'technical-question' : 'job';
       state.settings = {
         ...state.settings,
         statuses: msg.statuses,
         defaultStatus: msg.defaultStatus,
         model: msg.model,
+        timeoutMs: msg.timeoutMs,
         cropMaxSide: msg.cropMaxSide,
         cropQuality: msg.cropQuality,
         warnDuplicate: msg.warnDuplicate,
@@ -790,5 +854,7 @@
       return false;
     }
     return false;
-  });
+  };
+  chrome.runtime.onMessage.addListener(messageListener);
+  window.addEventListener('pagehide', () => { const id = state.requestId; unmount(); if (id) send({ type: 'ANALYZE_ABORT', requestId: id }); chrome.runtime.onMessage.removeListener(messageListener); delete globalThis.__JDT_OVERLAY_BRIDGE__; delete window.__JDT_OVERLAY_LOADED__; }, { once: true });
 })();

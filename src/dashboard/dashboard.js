@@ -54,6 +54,7 @@ function toast(message, kind = '', actions = [], ms = 3200) {
 }
 
 const color = (name) => statusDef(name, { statuses: state.statuses }).color;
+const statusChoices = (current) => current && !state.statuses.some((s) => s.name === current) ? [...state.statuses, statusDef(current, state.settings)] : state.statuses;
 
 /* ------------------------------------------------------------------ */
 /* 加载与渲染                                                          */
@@ -155,7 +156,7 @@ function renderPanels() {
 }
 
 function renderStatusFilter() {
-  const list = state.statuses.filter((s) => (state.stats.statusList.find((x) => x.name === s.name)?.count || 0) > 0);
+  const list = state.stats.statusList.filter((s) => s.count > 0);
   $('status-filter').innerHTML = [
     `<button class="f-chip${state.statusFilter.size === 0 ? ' on' : ''}" data-status="">全部 <span class="n">${state.stats.total}</span></button>`,
     ...list.map((s) => {
@@ -267,7 +268,7 @@ function renderTable() {
         </td>
         <td class="mono">${esc(r.location || '—')}</td>
         <td class="mono">${esc(r.salary || '—')}</td>
-        <td class="td-sel"><select data-act="status" style="color:${c}">${state.statuses
+        <td class="td-sel"><select data-act="status" style="color:${c}">${statusChoices(r.status)
           .map((s) => `<option value="${esc(s.name)}"${s.name === r.status ? ' selected' : ''}>${esc(s.name)}</option>`)
           .join('')}</select></td>
         <td class="td-date"><input type="date" data-act="appliedAt" value="${r.appliedAt ? fmtDate(r.appliedAt) : ''}"></td>
@@ -388,7 +389,7 @@ async function openDrawer(id) {
       <div class="grid">
         <label class="field full"><span>公司名称</span><input id="d-company" value="${esc(r.company)}"></label>
         <label class="field full"><span>岗位名称</span><input id="d-title2" value="${esc(r.title)}"></label>
-        <label class="field"><span>状态</span><select id="d-status" style="color:${color(r.status)}">${state.statuses
+        <label class="field"><span>状态</span><select id="d-status" style="color:${color(r.status)}">${statusChoices(r.status)
           .map((s) => `<option value="${esc(s.name)}"${s.name === r.status ? ' selected' : ''}>${esc(s.name)}</option>`)
           .join('')}</select></label>
         <label class="field"><span>投递日期</span><input id="d-applied" type="date" value="${r.appliedAt ? fmtDate(r.appliedAt) : ''}"></label>
@@ -686,6 +687,7 @@ $('d-delete').addEventListener('click', async () => {
 });
 
 $('btn-options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+$('btn-knowledge').addEventListener('click', () => send({ type: 'OPEN_KNOWLEDGE' }));
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -701,3 +703,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 load().catch((err) => toast(`载入失败：${err.message}`, 'err', [], 0));
+
+chrome.runtime.onMessage.addListener((msg, sender, respond) => { if (msg.type === 'JDT_DASHBOARD_PING') respond({ dashboard: true }); return false; });

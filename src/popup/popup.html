@@ -21,6 +21,11 @@
     <button class="btn btn-primary" id="btn-goto-options">打开设置</button>
   </div>
 
+  <section class="recent" aria-label="网页胶囊设置">
+    <div class="row-between"><h2>网页胶囊</h2><button class="link" id="island-reset">重置位置</button></div>
+    <p id="island-status" style="font-size:12px;color:#64748b;overflow-wrap:anywhere">读取当前网站…</p>
+    <button class="btn" id="island-toggle" disabled>读取中…</button>
+  </section>
   <main id="main">
     <div class="actions">
       <button class="btn btn-primary big" id="btn-region">
@@ -31,6 +36,10 @@
         <span class="ico">▣</span>
         <span class="txt"><b>整屏识别 JD</b><em>直接截当前整屏 · <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></em></span>
       </button>
+      <button class="btn big" id="btn-region-question">
+        <span class="ico">❓</span>
+        <span class="txt"><b>框选识别题目</b><em>提取八股文问答到知识库核对</em></span>
+      </button>
     </div>
 
     <div class="stats" id="stats"></div>
@@ -38,7 +47,10 @@
     <section class="recent">
       <div class="row-between">
         <h2>最近记录</h2>
-        <button class="link" id="btn-dashboard">打开进度表 →</button>
+        <span>
+          <button class="link" id="btn-knowledge">面试知识库 →</button>
+          <button class="link" id="btn-dashboard">打开进度表 →</button>
+        </span>
       </div>
       <div id="recent-list" class="list"></div>
     </section>

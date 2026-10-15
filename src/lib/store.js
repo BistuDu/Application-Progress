@@ -23,7 +23,7 @@ import {
   uid,
   uniq,
 } from './util.js';
-import { RECORDS_KEY, getSettings, statusDef } from './settings.js';
+import { DEFAULT_STATUSES, RECORDS_KEY, getSettings, statusDef } from './settings.js';
 
 export async function listRecords() {
   const { [RECORDS_KEY]: records } = await chrome.storage.local.get(RECORDS_KEY);
@@ -175,20 +175,21 @@ export function computeStats(records, settings) {
 
   const total = records.length;
   const offerCount = byStatus.get('Offer') || 0;
-  const interviewCount = byStatus.get('面试') || 0;
+  const interviewCount = ['面试', '一面', '二面', '三面', 'HR面'].reduce((n, name) => n + (byStatus.get(name) || 0), 0);
   const rejected = byStatus.get('拒绝/已结束') || 0;
   const active = total - offerCount - rejected;
 
   const createdIn = (from) => records.filter((r) => (r.createdAt || 0) >= from).length;
 
   // 漏斗：按"是否到达过该阶段"统计，比只按当前状态更能反映真实进度
-  const reached = { 已投递: 0, 筛选中: 0, 测评中: 0, 面试: 0, Offer: 0 };
-  const order = ['已投递', '筛选中', '测评中', '面试', 'Offer'];
+  const order = (settings?.statuses || DEFAULT_STATUSES).filter((s) => s.kind !== 'closed' && s.kind !== 'unknown' && !['拒绝/已结束', '待确认'].includes(s.name)).map((s) => s.name);
+  const reached = Object.fromEntries(order.map((name) => [name, 0]));
   const rank = (name) => {
     const i = order.indexOf(name);
     if (i !== -1) return i;
-    if (name === '拒绝/已结束' || name === '待确认') return 0;
-    return 0;
+    if (name === '面试') return order.indexOf('一面');
+    if (name === '筛选中') return order.indexOf('已投递');
+    return -1;
   };
   for (const r of records) {
     const best = Math.max(rank(r.status), ...(r.statusHistory || []).map((h) => rank(h.status)));

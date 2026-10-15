@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>面试知识库 · JD 投递追踪</title>
+  <link rel="stylesheet" href="knowledge.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="../../icons/icon48.png" alt="">
+      <div>
+        <h1>面试知识库</h1>
+        <p id="brand-sub">本地保存 · 只存整理后的问答与来源</p>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="projects" class="active">项目库 <span class="pill" id="pill-projects">0</span></button>
+      <button data-view="technical">八股文题库 <span class="pill" id="pill-technical">0</span></button>
+    </nav>
+    <div class="top-actions">
+      <span class="io-status" id="io-status" hidden></span>
+      <button class="btn" id="btn-add-image">图片录入</button>
+      <button class="btn" id="btn-add-file">文件导入</button>
+      <div class="menu-wrap">
+        <button class="btn" id="btn-backup">备份 / 导出 ▾</button>
+        <div class="menu" id="backup-menu" hidden>
+          <button data-io="json">导出完整 JSON 备份</button>
+          <button data-io="restore">从 JSON 备份恢复…</button>
+          <button data-io="md-projects">导出项目库 Markdown</button>
+          <button data-io="md-technical">导出八股文题库 Markdown</button>
+          <button data-io="md-both">导出两库 Markdown</button>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-new">＋ 新建</button>
+      <button class="icon-btn" id="btn-options" title="设置">⚙</button>
+      <button class="icon-btn" id="btn-dashboard" title="投递进度表">▤</button>
+    </div>
+  </header>
+
+  <div class="banner-bar" id="banner" hidden></div>
+
+  <nav id="knowledge-subnav" class="knowledge-subnav" hidden><button class="btn" id="bank-browse">题库浏览</button><button class="btn" id="bank-review">每日复习</button></nav>
+  <main>
+    <!-- ---------------- 项目库 ---------------- -->
+    <section class="view layout" id="view-projects">
+      <aside class="side">
+        <div class="side-head">
+          <input id="proj-search" type="search" placeholder="搜索项目名、简介或问答…">
+        </div>
+        <div class="side-actions">
+          <button class="btn btn-sm" id="proj-new">＋ 新建项目</button>
+          <button class="btn btn-sm" id="proj-resume">上传简历提取</button>
+        </div>
+        <div class="list" id="proj-list"></div>
+      </aside>
+      <section class="pane" id="proj-detail">
+        <div class="empty-pane" id="proj-empty">左侧选择或新建一个项目。<br>项目不需要关联任何岗位记录。</div>
+      </section>
+    </section>
+
+    <!-- ---------------- 八股文题库 ---------------- -->
+    <section class="view layout" id="view-technical" hidden>
+      <aside class="side side-narrow">
+        <div class="side-head"><b>分类</b></div>
+        <div class="list" id="cat-list"></div>
+        <div class="side-actions">
+          <button class="btn btn-sm" id="cat-new">＋ 新建分类</button>
+        </div>
+      </aside>
+      <aside class="side side-list">
+        <div class="side-head">
+          <input id="tq-search" type="search" placeholder="搜索题目、答案与代码…">
+        </div>
+        <div class="filters" id="tq-filters">
+          <select id="tq-filter-cat"><option value="">全部分类</option></select>
+          <div class="tag-filter" id="tq-filter-tags"></div>
+        </div>
+        <div class="list" id="tq-list"></div>
+        <div class="side-foot">
+          <span id="tq-count"></span>
+          <button class="btn btn-sm btn-primary" id="tq-add">＋ 新增问答</button>
+        </div>
+      </aside>
+      <section class="pane" id="tq-detail">
+        <div class="empty-pane" id="tq-empty">左侧选择一道题查看答案，或点「新增问答」。</div>
+      </section>
+    </section>
+    <section class="view" id="view-review" hidden></section>
+  </main>
+  <button class="btn btn-primary floating-new" id="floating-new">＋ 新建问答</button>
+
+  <!-- 核对面板（手动新增 / 图片 / 文件导入共用） -->
+  <div class="modal" id="review-panel" hidden></div>
+  <!-- AI 参考题与草稿面板 -->
+  <div class="modal" id="assist-panel" hidden></div>
+  <!-- 恢复预览 -->
+  <div class="modal" id="restore-panel" hidden></div>
+
+  <input type="file" id="file-image" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden>
+  <input type="file" id="file-doc" accept=".md,.markdown,.txt,.pdf,.docx,.doc" multiple hidden>
+  <input type="file" id="file-resume" accept=".pdf,.docx,.doc" hidden>
+  <input type="file" id="file-restore" accept=".json,application/json" hidden>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="../vendor/marked/marked.min.js"></script>
+  <script src="../vendor/dompurify/purify.min.js"></script>
+  <script src="../vendor/pdfjs/pdf.min.js"></script>
+  <script src="../vendor/mammoth/mammoth.browser.min.js"></script>
+  <script type="module" src="knowledge.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Backend question bank (print fixture)</title>
+  <style>
+    body { font-family: Helvetica, Arial, sans-serif; margin: 36px; line-height: 1.7; color: #111; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 15px; margin: 18px 0 6px; }
+    pre { background: #eef2f7; padding: 8px 10px; }
+    .brk { break-before: page; page-break-before: always; }
+  </style>
+</head>
+<body>
+  <h1>Backend question bank</h1>
+
+  <h2>Q: What is a covering index?</h2>
+  <div class="brk"></div>
+  <p>A:</p>
+  <p>When every column the query needs is present in the index, the engine does not need to look up
+  the clustered index again, which removes the extra random IO of a lookup.</p>
+
+  <h2>Q: Why is a B+ tree preferred for database indexes?</h2>
+  <p>A:</p>
+  <p>All data lives in the leaf nodes, so internal nodes hold more keys and the tree stays shallow;
+  the leaves are linked, which makes range scans cheap.</p>
+  <pre>EXPLAIN SELECT * FROM orders WHERE user_id = 42;</pre>
+
+  <h2>Q: What does the redo log protect against?</h2>
+</body>
+</html>

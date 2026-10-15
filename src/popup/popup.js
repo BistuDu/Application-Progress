@@ -26,7 +26,8 @@ function toast(message, ms = 2600) {
 }
 
 function statusOptions(statuses, selected) {
-  return statuses
+  const choices = selected && !statuses.some((s) => s.name === selected) ? [...statuses, { name: selected }] : statuses;
+  return choices
     .map((s) => `<option value="${s.name}"${s.name === selected ? ' selected' : ''}>${s.name}</option>`)
     .join('');
 }
@@ -113,8 +114,8 @@ function escapeHtml(s) {
 }
 
 /** 先把结果写进 storage，再由页面侧读取——弹窗关闭后流程继续在页面里跑 */
-async function startCapture(mode) {
-  const res = await send({ type: 'START_CAPTURE', mode });
+async function startCapture(mode, target = 'job') {
+  const res = await send({ type: 'START_CAPTURE', mode, target });
   if (!res.ok) {
     toast(res.error || '无法开始截图', 4000);
     return;
@@ -124,8 +125,13 @@ async function startCapture(mode) {
 
 $('btn-region').addEventListener('click', () => startCapture('region'));
 $('btn-viewport').addEventListener('click', () => startCapture('viewport'));
+$('btn-region-question').addEventListener('click', () => startCapture('region', 'technical-question'));
 $('btn-dashboard').addEventListener('click', async () => {
   await send({ type: 'OPEN_DASHBOARD' });
+  window.close();
+});
+$('btn-knowledge').addEventListener('click', async () => {
+  await send({ type: 'OPEN_KNOWLEDGE' });
   window.close();
 });
 $('btn-options').addEventListener('click', () => {
@@ -136,3 +142,21 @@ $('btn-goto-options').addEventListener('click', () => {
 });
 
 render();
+
+async function renderIsland() {
+  const res = await send({ type: 'ISLAND_GET_STATE' });
+  const usable = res.ok && res.available && res.permission;
+  $('island-toggle').disabled = !usable;
+  $('island-reset').disabled = !res.ok;
+  $('island-status').textContent = !res.ok ? res.error : !res.available ? '此页面不支持胶囊，请在普通 HTTP／HTTPS 网页使用。' : !res.permission ? '缺少网站权限，请在扩展管理中允许访问网站。' : `${res.host} · ${res.enabled ? '已开启' : '此网站已关闭'}`;
+  $('island-toggle').textContent = res.enabled ? '在此网站关闭' : '在此网站开启';
+  $('island-toggle').onclick = async () => {
+    const r = await send({ type: 'ISLAND_SET_SITE', enabled: !res.enabled });
+    if (!r.ok) toast(r.error); await renderIsland();
+  };
+}
+$('island-reset').addEventListener('click', async () => {
+  const r = await send({ type: 'ISLAND_RESET_POSITION' }); toast(r.ok ? '胶囊位置已重置' : r.error); await renderIsland();
+});
+chrome.storage.onChanged.addListener((c) => { if (c.islandPreferences) renderIsland(); });
+renderIsland();

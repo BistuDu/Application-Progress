@@ -5,8 +5,8 @@
 export const SETTINGS_KEY = 'settings';
 export const RECORDS_KEY = 'records';
 
-/** 默认状态词表，与 /offer 技能的状态规范保持一致。 */
-export const DEFAULT_STATUSES = [
+/** 旧默认词表仅用于识别未定制的设置和显示历史记录。 */
+const LEGACY_STATUSES = [
   { name: '已投递', color: '#3b82f6', kind: 'applied', desc: '已提交申请，等待回复' },
   { name: '筛选中', color: '#8b5cf6', kind: 'progress', desc: '简历/笔试筛选中' },
   { name: '测评中', color: '#f59e0b', kind: 'progress', desc: '在线测评或笔试进行中' },
@@ -14,6 +14,17 @@ export const DEFAULT_STATUSES = [
   { name: 'Offer', color: '#10b981', kind: 'offer', desc: '已收到录用意向' },
   { name: '拒绝/已结束', color: '#ef4444', kind: 'closed', desc: '被拒、流程终止或主动放弃' },
   { name: '待确认', color: '#94a3b8', kind: 'unknown', desc: '信息不足，需要进一步确认' },
+];
+
+/** 默认投递流程。 */
+export const DEFAULT_STATUSES = [
+  { name: '已投递', color: '#3b82f6', kind: 'applied', desc: '已提交申请，等待回复' },
+  { name: '测评中', color: '#f59e0b', kind: 'progress', desc: '在线测评或笔试进行中' },
+  { name: '一面', color: '#06b6d4', kind: 'progress', desc: '第一轮面试' },
+  { name: '二面', color: '#0891b2', kind: 'progress', desc: '第二轮面试' },
+  { name: '三面', color: '#0e7490', kind: 'progress', desc: '第三轮面试' },
+  { name: 'HR面', color: '#14b8a6', kind: 'progress', desc: 'HR 面试' },
+  { name: 'Offer', color: '#10b981', kind: 'offer', desc: '已收到录用意向' },
 ];
 
 export const DEFAULT_PROMPT = `你是求职进度管理助手。请阅读这张招聘信息截图，提取结构化信息。
@@ -75,9 +86,11 @@ export const DEFAULT_SETTINGS = {
 export async function getSettings() {
   const { [SETTINGS_KEY]: saved } = await chrome.storage.local.get(SETTINGS_KEY);
   const merged = { ...DEFAULT_SETTINGS, ...(saved || {}) };
-  if (!Array.isArray(merged.statuses) || merged.statuses.length === 0) {
+  const legacyDefaults = Array.isArray(saved?.statuses) && saved.statuses.length === LEGACY_STATUSES.length && saved.statuses.every((s, i) => s.name === LEGACY_STATUSES[i].name && s.color === LEGACY_STATUSES[i].color);
+  if (!Array.isArray(merged.statuses) || merged.statuses.length === 0 || legacyDefaults) {
     merged.statuses = DEFAULT_STATUSES;
   }
+  if (legacyDefaults && !merged.statuses.some((s) => s.name === merged.defaultStatus)) merged.defaultStatus = '已投递';
   return merged;
 }
 
@@ -97,7 +110,7 @@ export function statusNames(settings) {
 export function statusDef(name, settings) {
   const list = settings?.statuses || DEFAULT_STATUSES;
   return (
-    list.find((s) => s.name === name) || {
+    list.find((s) => s.name === name) || LEGACY_STATUSES.find((s) => s.name === name) || {
       name: name || '待确认',
       color: '#94a3b8',
       kind: 'unknown',

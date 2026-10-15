@@ -313,3 +313,20 @@ document.querySelectorAll('input, select, textarea').forEach((node) => {
   $('apiBase').title = `实际请求：${chatUrlCandidates(settings.apiBase)[0] || ''}`;
   void recordsCache;
 })();
+
+async function renderIslandSites() {
+  const r = await send({ type: 'ISLAND_GET_STATE' });
+  const list = $('island-sites'); list.replaceChildren();
+  if (!r.ok) { list.textContent = r.error; return; }
+  if (!r.preferences.disabledHosts.length) { list.textContent = '没有已关闭的网站'; return; }
+  for (const host of r.preferences.disabledHosts) {
+    const row = document.createElement('div'); row.className = 'row gap'; row.style.marginTop = '8px';
+    const text = document.createElement('span'); text.textContent = host;
+    const button = document.createElement('button'); button.className = 'btn'; button.textContent = '恢复显示';
+    button.addEventListener('click', async () => { button.disabled = true; const result = await send({ type: 'ISLAND_SET_SITE', host, enabled: true }); if (!result.ok) toast(result.error, 'err'); await renderIslandSites(); });
+    row.append(text, button); list.append(row);
+  }
+}
+$('island-reset').addEventListener('click', async () => { const r = await send({ type: 'ISLAND_RESET_POSITION' }); setStatus('island-hint', r.ok ? '位置已重置' : r.error, r.ok ? 'ok' : 'err'); });
+chrome.storage.onChanged.addListener((c) => { if (c.islandPreferences) renderIslandSites(); });
+renderIslandSites();

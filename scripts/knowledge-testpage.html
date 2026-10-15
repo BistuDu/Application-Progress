@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>八股文练习 · 测试页</title>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 40px auto; max-width: 820px; line-height: 1.8; color: #111; }
+    h1 { font-size: 22px; }
+    .q { border-bottom: 1px solid #e2e8f0; padding: 12px 0; }
+    .q h2 { font-size: 17px; margin: 0 0 6px; }
+    .q p { margin: 0; color: #333; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>后端面试八股文练习</h1>
+  <section id="questions">
+    <div class="q" id="q1">
+      <h2>1. 数据库索引为什么能加速查询？</h2>
+      <p>答：索引把随机 IO 变成顺序 IO，并减少需要扫描的行数。B+ 树索引的层数很低，通常 3 到 4 层就能覆盖上千万行数据。</p>
+      <pre><code>EXPLAIN SELECT * FROM orders WHERE user_id = 42;</code></pre>
+    </div>
+    <div class="q" id="q2">
+      <h2>2. 什么是回表？</h2>
+      <p>答：当查询需要的列不在二级索引里时，需要先查二级索引拿到主键，再回到聚簇索引取整行数据，这个过程叫回表。可以用覆盖索引避免回表。</p>
+    </div>
+    <div class="q" id="q3">
+      <h2>3. TCP 为什么需要三次握手？</h2>
+    </div>
+  </section>
+</body>
+</html>

@@ -38,7 +38,7 @@
     "notifications"
   ],
   "host_permissions": [
-    "https://api.deepseek.com/*"
+    "<all_urls>"
   ],
   "optional_host_permissions": [
     "https://*/*",
@@ -46,22 +46,53 @@
   ],
   "commands": {
     "capture-region": {
-      "suggested_key": { "default": "Alt+Shift+J", "mac": "Alt+Shift+J" },
+      "suggested_key": {
+        "default": "Alt+Shift+J",
+        "mac": "Alt+Shift+J"
+      },
       "description": "框选截图并识别 JD"
     },
     "capture-viewport": {
-      "suggested_key": { "default": "Alt+Shift+K", "mac": "Alt+Shift+K" },
+      "suggested_key": {
+        "default": "Alt+Shift+K",
+        "mac": "Alt+Shift+K"
+      },
       "description": "整屏截图并识别 JD"
     },
     "open-dashboard": {
-      "suggested_key": { "default": "Alt+Shift+L", "mac": "Alt+Shift+L" },
+      "suggested_key": {
+        "default": "Alt+Shift+L",
+        "mac": "Alt+Shift+L"
+      },
       "description": "打开投递进度表"
     }
   },
   "web_accessible_resources": [
     {
-      "resources": ["icons/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "icons/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "exclude_matches": [
+        "https://chromewebstore.google.com/*",
+        "https://chrome.google.com/webstore/*"
+      ],
+      "js": [
+        "src/lib/island-core.js",
+        "src/content/island.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ]
 }

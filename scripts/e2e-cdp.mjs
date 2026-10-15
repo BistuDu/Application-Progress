@@ -25,6 +25,7 @@ const PAGE_PORT = 8766;
 
 const args = process.argv.slice(2);
 const keep = args.includes('--keep');
+const mock = args.includes('--mock');
 let pass = 0;
 let failed = 0;
 const failures = [];
@@ -103,7 +104,14 @@ async function shot(conn, file) {
 }
 
 /* ---------------- 静态页服务 ---------------- */
-const pageServer = http.createServer((req, res) => {
+const pageServer = http.createServer(async (req, res) => {
+  if (mock && req.method === 'POST') {
+    for await (const _ of req) { /* consume body */ }
+    if (/invalid-key/.test(req.headers.authorization || '')) { res.writeHead(401); res.end('{"error":{"message":"无效的 API Key"}}'); return; }
+    const result = { is_job: true, company: '测试公司', title: '测试开发工程师（实习）', location: '上海', salary: '200–300 元/天', jd: '设计测试系统，开发接口自动化，负责 MySQL 数据库测试和性能分析。', requirements: '熟悉 Java、SQL、Linux，掌握计算机网络和数据库基础，具有自动化测试经验。', skills: ['Java', 'MySQL', 'Linux'], summary: '实习测试开发岗位' };
+    setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] })); }, 900);
+    return;
+  }
   const file = path.join(HERE, req.url === '/' ? 'testpage.html' : decodeURIComponent(req.url.split('?')[0]));
   if (!file.startsWith(HERE) || !fs.existsSync(file)) {
     res.writeHead(404);
@@ -120,7 +128,7 @@ const JOB_URL = `http://127.0.0.1:${PAGE_PORT}/testpage.html`;
 /*
  * 真实使用中，点击扩展图标 / 快捷键 / 右键菜单会授予 activeTab，截图因此可用。
  * 无头自动化里没有工具栏可点，动态申请权限又会弹出无人应答的系统弹窗，
- * 所以这里把扩展复制一份到临时目录，只在副本的 manifest 里补上 <all_urls>。
+ * 所以这里把扩展复制一份到临时目录，副本沿用正式 manifest 的 <all_urls> 权限。
  * 交付目录里的 manifest 不会被改动，其余代码与线上完全一致。
  */
 const TEST_EXT = path.join(os.tmpdir(), 'jdt-e2e-ext');
@@ -129,13 +137,7 @@ fs.cpSync(ROOT, TEST_EXT, {
   recursive: true,
   filter: (src) => !/[/\\](tmp|\.git|node_modules)([/\\]|$)/.test(src),
 });
-{
-  const mfPath = path.join(TEST_EXT, 'manifest.json');
-  const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
-  mf.host_permissions = [...new Set([...(mf.host_permissions || []), '<all_urls>'])];
-  fs.writeFileSync(mfPath, JSON.stringify(mf, null, 2));
-  console.log(`测试副本：${TEST_EXT}（仅在副本里加了 <all_urls>）`);
-}
+console.log(`测试副本：${TEST_EXT}（使用正式 manifest，不补测试权限）`);
 
 /* ---------------- 启动浏览器 ---------------- */
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -233,8 +235,8 @@ try {
   check('权限清单包含 storage/scripting', perms.includes('storage') && perms.includes('scripting'));
 
   /* 3. 写入测试用设置（含 API Key） */
-  let apiKey = process.env.JDT_API_KEY || '';
-  let apiBase = process.env.JDT_API_BASE || 'https://api.deepseek.com';
+  let apiKey = mock ? 'mock-regression-only-key' : process.env.JDT_API_KEY || '';
+  let apiBase = mock ? `http://127.0.0.1:${PAGE_PORT}` : process.env.JDT_API_BASE || 'https://api.deepseek.com';
   let model = process.env.JDT_MODEL || 'deepseek-flash';
   if (!apiKey && args.includes('--from-zcode')) {
     const found = readZcodeKey();
@@ -369,7 +371,7 @@ try {
   await job.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x1, y: rect.y1, button: 'left', buttons: 0, clickCount: 1 });
 
   const processing = await waitFor(
-    () => job.eval(`document.getElementById("jdt-overlay-host").shadowRoot.textContent.includes("正在识别")`),
+    () => job.eval(`["jdt-overlay-host","jdt-island-host"].some(id=>document.getElementById(id)?.shadowRoot.textContent.includes("正在识别"))`),
     { timeoutMs: 15000, label: '进入识别中状态' },
   );
   check('松手后进入识别中状态', processing === true);
@@ -449,7 +451,7 @@ try {
   await job.eval(`(() => {
     const r = document.getElementById("jdt-overlay-host").shadowRoot;
     const s = r.querySelector("#f-status");
-    s.value = "面试";
+    s.value = "一面";
     s.dispatchEvent(new Event("change", {bubbles:true}));
     r.querySelector("#f-next").value = "9/20 前完成在线测评";
     return true;
@@ -470,7 +472,7 @@ try {
   check('记录含创建时间', typeof rec.createdAt === 'number' && rec.createdAt > 0);
   check('记录含投递日期', typeof rec.appliedAt === 'number');
   check('记录含 JD 正文', (rec.jd || '').length > 20, `${(rec.jd || '').length} 字`);
-  check('记录保存了手动选择的状态', rec.status === '面试', rec.status);
+  check('记录保存了手动选择的状态', rec.status === '一面', rec.status);
   check('记录保存了下一步', rec.nextAction === '9/20 前完成在线测评', rec.nextAction);
   check('记录保存了截图', (rec.screenshot || '').startsWith('data:image/jpeg'), `${Math.round((rec.screenshot || '').length / 1024)}KB`);
   check('记录记录了来源站点', rec.sourceSite === '127.0.0.1' || rec.sourceSite === '', rec.sourceSite);
@@ -496,7 +498,7 @@ try {
   console.log(`  · 看板卡片：${dashState.cards.join(' | ')}`);
   check('看板统计到 1 条记录', dashState.rows === 1, dashState.count);
   check('看板表格显示该岗位', dashState.rowText.includes('测试开发'), dashState.rowText.split('\n')[0]);
-  check('漏斗统计到面试阶段', dashState.funnel.includes('面试'), dashState.funnel.slice(0, 60));
+  check('漏斗统计到一面阶段', dashState.funnel.includes('一面'), dashState.funnel.slice(0, 60));
   await shot(dash, '4-dashboard.jpg');
 
   /* 11. 看板里改状态 */
@@ -641,13 +643,13 @@ try {
   /* 17. popup 改状态 */
   await pop.eval(`(() => {
     const s = document.querySelector("#recent-list select");
-    s.value = "拒绝/已结束";
+    s.value = "二面";
     s.dispatchEvent(new Event("change",{bubbles:true}));
     return true;
   })()`);
   await sleep(1200);
   const afterReject = JSON.parse(await sw.eval('chrome.storage.local.get("records").then(o=>JSON.stringify(o.records||[]))'));
-  check('popup 内可快捷改状态', afterReject[0]?.status === '拒绝/已结束', afterReject[0]?.status);
+  check('popup 内可快捷改状态', afterReject[0]?.status === '二面', afterReject[0]?.status);
 
   /* 20. 手动添加 + 批量改状态 */
   console.log('\n手动添加与批量操作…');

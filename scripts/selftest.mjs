@@ -39,7 +39,7 @@ globalThis.chrome = {
   },
 };
 
-const { DEFAULT_SETTINGS } = await import(path.join(ROOT, 'src/lib/settings.js'));
+const { DEFAULT_SETTINGS, getSettings } = await import(path.join(ROOT, 'src/lib/settings.js'));
 const { chatUrlCandidates, originPattern, statusColor } = await import(path.join(ROOT, 'src/lib/settings.js'));
 const { analyzeScreenshot, extractJson, isEffectivelyEmpty, normalizeResult, testConnection } = await import(
   path.join(ROOT, 'src/lib/vision.js'),
@@ -197,6 +197,36 @@ console.log('\n[4] 空返回自动重试');
   globalThis.fetch = realFetch;
 }
 
+/* ---------------- 多轮面试统计与默认设置兼容 ---------------- */
+console.log('\n[4b] 多轮面试状态与累计漏斗');
+const stages = DEFAULT_SETTINGS.statuses.map((s) => s.name);
+const statusRecords = [
+  { status: '二面', statusHistory: [{ status: '已投递' }, { status: '一面' }] },
+  { status: 'HR面', statusHistory: [{ status: '三面' }] },
+  { status: 'Offer', statusHistory: [{ status: 'HR面' }] },
+  { status: '拒绝/已结束', statusHistory: [{ status: '三面' }] },
+  { status: '面试', statusHistory: [{ status: '筛选中' }] },
+];
+const roundStats = computeStats(statusRecords, DEFAULT_SETTINGS);
+check('四轮面试都计入当前面试人数且兼容历史面试', roundStats.interviewCount === 3);
+check('面试率合并面试与 Offer', roundStats.interviewRate === 4 / 5);
+check('拒绝前已达到三面的历史仍计入漏斗', roundStats.reached['三面'] === 3);
+check('二面未提前计入 HR 面', roundStats.reached['HR面'] === 2);
+check('Offer 阶段只计入实际达到 Offer 的记录', roundStats.reached.Offer === 1);
+check('漏斗使用配置的阶段顺序', roundStats.funnel.map((s) => s.name).join('|') === stages.join('|'));
+const previousSavedSettings = memory.settings;
+memory.settings = { statuses: [
+  { name: '已投递', color: '#3b82f6' }, { name: '筛选中', color: '#8b5cf6' },
+  { name: '测评中', color: '#f59e0b' }, { name: '面试', color: '#06b6d4' },
+  { name: 'Offer', color: '#10b981' }, { name: '拒绝/已结束', color: '#ef4444' },
+  { name: '待确认', color: '#94a3b8' },
+] };
+check('未定制的旧默认词表自动采用新默认', (await getSettings()).statuses.map((s) => s.name).join('|') === stages.join('|'));
+memory.settings = { statuses: [{ name: '自定义阶段', color: '#123456' }] };
+check('用户自定义词表保持可用', (await getSettings()).statuses[0].name === '自定义阶段');
+if (previousSavedSettings === undefined) delete memory.settings;
+else memory.settings = previousSavedSettings;
+
 /* ---------------- 真实接口测试 ---------------- */
 console.log('\n[5] 真实接口（截图识别）');
 let imageB64 = '';
@@ -265,24 +295,24 @@ if (!apiKey) {
     const dup = findDuplicates(await listRecords(), { company: rec.company, title: rec.title });
     check('重复检测命中同一条', dup.length === 1, `${dup.length} 条`);
 
-    await updateRecord(rec.id, { status: '面试' });
+    await updateRecord(rec.id, { status: '一面' });
     const after = (await listRecords())[0];
-    check('状态可手动修改', after.status === '面试');
-    check('状态变化写入时间线', after.statusHistory.length === 2 && after.statusHistory[1].status === '面试');
+    check('状态可手动修改', after.status === '一面');
+    check('状态变化写入时间线', after.statusHistory.length === 2 && after.statusHistory[1].status === '一面');
 
     const stats = computeStats(await listRecords(), { ...settings, statuses: DEFAULT_SETTINGS.statuses });
     check('统计总数正确', stats.total === 1);
     check('统计本周新增正确', stats.week === 1);
-    check('漏斗已推进到面试', stats.funnel.find((f) => f.name === '面试').count === 1);
+    check('漏斗已推进到一面', stats.funnel.find((f) => f.name === '一面').count === 1);
     check('漏斗未越过面试', stats.funnel.find((f) => f.name === 'Offer').count === 0);
     check('面试率正确', stats.interviewRate === 1);
     check('来源统计命中', stats.sites[0].name === 'BOSS直聘');
-    check('状态颜色可取', statusColor('面试', { statuses: DEFAULT_SETTINGS.statuses }) === '#06b6d4');
+    check('状态颜色可取', statusColor('一面', { statuses: DEFAULT_SETTINGS.statuses }) === '#06b6d4');
 
     const csv = toCsv(await listRecords());
     check('CSV 带 BOM 且含表头', csv.startsWith('\uFEFF') && csv.includes('公司') && csv.includes('示例'));
     const md = toMarkdown(await listRecords(), settings);
-    check('Markdown 含状态变化明细', md.includes('状态变化明细') && md.includes('已投递') && md.includes('面试') && md.includes('→'));
+    check('Markdown 含状态变化明细', md.includes('状态变化明细') && md.includes('已投递') && md.includes('一面') && md.includes('→'));
     check('Markdown 含岗位详情', md.includes('岗位职责') && md.includes('任职要求'));
     const json = JSON.parse(toExportJson(await listRecords(), settings));
     check('JSON 备份含 records 与状态词表', Array.isArray(json.records) && json.records.length === 1 && Array.isArray(json.statuses));
