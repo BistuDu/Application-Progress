@@ -9,6 +9,7 @@
   if (window.__JDT_OVERLAY_LOADED__) return;
   window.__JDT_OVERLAY_LOADED__ = true;
 
+  const panelMode = location.protocol === 'chrome-extension:' && location.pathname.endsWith('/workbench/capture.html');
   const HOST_ID = 'jdt-overlay-host';
   const Z = 2147483647;
 
@@ -57,6 +58,10 @@
   }
 
   async function send(message) {
+    if (panelMode && state.source) {
+      message = { ...message, windowId: state.source.windowId };
+      if (message.type === 'RECAPTURE') message.tabId = state.source.tabId;
+    }
     try {
       const res = await chrome.runtime.sendMessage(message);
       return res || { ok: false, error: '扩展没有响应。' };
@@ -82,6 +87,65 @@
   function statusColor(name) {
     const list = state.statuses.length ? state.statuses : STATUS_FALLBACK;
     return list.find((s) => s.name === name)?.color || '#94a3b8';
+  }
+
+  const COMPANY_TYPES = [
+    ['', '未标注'],
+    ['央企', '央企'],
+    ['国企', '国企'],
+    ['私企', '私企'],
+    ['其他', '其他'],
+  ];
+
+  function companyTypeOptions(current) {
+    return COMPANY_TYPES.map(
+      ([value, label]) => `<option value="${value}"${value === (current || '') ? ' selected' : ''}>${label}</option>`,
+    ).join('');
+  }
+
+  /** 内容脚本不能导入模块，通过 background 复用同一份公司名词典。 */
+  function bindCompanyType(initialType = '') {
+    const select = el('#f-company-type');
+    const company = el('#f-company');
+    const hint = el('#f-company-type-hint');
+    if (!select || !company) return;
+    let touched = Boolean(initialType);
+    let timer = null;
+    let sequence = 0;
+
+    const writeHint = (value, reason) => {
+      if (!hint) return;
+      if (!value) hint.textContent = '未识别，可手动选择';
+      else if (reason === 'explicit') hint.textContent = '来自截图';
+      else if (reason === 'dictionary') hint.textContent = '根据公司名建议，可修改';
+      else if (reason === 'keyword') hint.textContent = '根据公司名关键词建议，可修改';
+      else hint.textContent = '手动选择';
+    };
+
+    const request = async () => {
+      if (touched) return;
+      const token = ++sequence;
+      const res = await send({ type: 'SUGGEST_COMPANY_TYPE', company: company.value, explicitType: state.result?.companyType || '' });
+      if (token !== sequence || touched) return;
+      const value = res?.ok ? res.value || '' : '';
+      select.value = value;
+      writeHint(value, res?.reason || '');
+    };
+
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void request(), 220);
+    };
+
+    if (initialType) select.value = initialType;
+    writeHint(initialType, initialType ? 'explicit' : '');
+    company.addEventListener('input', schedule);
+    company.addEventListener('blur', () => void request());
+    select.addEventListener('change', () => {
+      touched = true;
+      writeHint(select.value, 'manual');
+    });
+    void request();
   }
 
   /* ---------------------------------------------------------------- */
@@ -191,6 +255,7 @@
       border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,.14);
     }
     .field textarea { resize: vertical; min-height: 74px; line-height: 1.6; font-size: 12.5px; }
+    .field .field-hint { font-size: 10.5px; color: #94a3b8; line-height: 1.3; }
     .field select.s-status { font-weight: 600; }
     .sec { margin-top: 14px; }
     .sec-title { font-size: 11.5px; color: #64748b; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
@@ -221,7 +286,7 @@
     host.style.cssText = `all: initial; position: fixed; inset: 0; width: 0; height: 0; z-index: ${Z};`;
     const shadow = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = CSS;
+    style.textContent = CSS + (panelMode ? `.panel{width:100%;max-width:100%;box-shadow:none;animation:none}.grid{grid-template-columns:minmax(0,1fr)}.p-head{flex-wrap:wrap}.p-body{padding:12px}.p-foot{flex-wrap:wrap}` : '');
     shadow.appendChild(style);
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
@@ -244,6 +309,11 @@
     clearTimeout(state.watchdog);
     state.requestId = '';
     globalThis.__JDT_ISLAND__?.phase('idle');
+    if (panelMode) {
+      document.getElementById('empty').hidden = false;
+      document.documentElement.removeAttribute('data-workbench-dirty');
+      if (state.source) void chrome.storage.session.remove(`workbenchCapture:${state.source.windowId}`);
+    }
     if (state.pendingIslandFeedback) { globalThis.__JDT_ISLAND__?.terminal(state.pendingIslandFeedback, true); state.pendingIslandFeedback = ''; }
   }
 
@@ -468,6 +538,11 @@
       showError(msg.error || '识别失败。', msg);
       return;
     }
+    if (msg.panel) {
+      unmount();
+      globalThis.__JDT_ISLAND__?.terminal('识别完成，请在侧栏核对', true);
+      return;
+    }
     // 八股文题目：候选已经交接给知识库页面，这里只做一次性提示
     if (msg.target === 'technical-question') {
       showHandoff(msg);
@@ -575,9 +650,13 @@
             <div class="grid">
               <div class="field full"><label>公司名称</label><input id="f-company" value="${esc(r.company)}" placeholder="例如：字节跳动"></div>
               <div class="field full"><label>岗位名称</label><input id="f-title" value="${esc(r.title)}" placeholder="例如：后端开发实习生"></div>
+              <div class="field"><label>企业性质</label>
+                <select id="f-company-type">${companyTypeOptions(r.companyType)}</select>
+                <small class="field-hint" id="f-company-type-hint"></small>
+              </div>
+              <div class="field"><label>类型</label><input id="f-jobtype" value="${esc(r.jobType)}" placeholder="实习/校招/社招"></div>
               <div class="field"><label>工作地点</label><input id="f-location" value="${esc(r.location)}" placeholder="北京"></div>
               <div class="field"><label>薪资</label><input id="f-salary" value="${esc(r.salary)}" placeholder="300-400/天"></div>
-              <div class="field"><label>类型</label><input id="f-jobtype" value="${esc(r.jobType)}" placeholder="实习/校招/社招"></div>
               <div class="field"><label>学历要求</label><input id="f-education" value="${esc(r.education)}" placeholder="本科及以上"></div>
               <div class="field"><label>截止时间</label><input id="f-deadline" value="${esc(r.deadline)}" placeholder="2026-11-30"></div>
               <div class="field"><label>投递方式</label><input id="f-contact" value="${esc(r.contact)}" placeholder="邮箱 / 链接"></div>
@@ -613,7 +692,7 @@
           </div>
         </div>
         <div class="p-foot">
-          <span class="hint">${esc((location.hostname || '').replace(/^www\./, ''))}</span>
+          <span class="hint">${esc((state.source ? new URL(state.source.url).hostname : location.hostname || '').replace(/^www\./, ''))}</span>
           <span class="grow"></span>
           <button class="btn btn-ghost" id="jdt-cancel">取消</button>
           <button class="btn btn-primary" id="jdt-save">保存记录</button>
@@ -669,6 +748,7 @@
   }
 
   function bindReview(initialStatus) {
+    bindCompanyType(state.result?.companyType || '');
     el('#jdt-close2').addEventListener('click', unmount);
     el('#jdt-cancel').addEventListener('click', unmount);
     el('#jdt-recapture').addEventListener('click', async () => {
@@ -711,6 +791,7 @@
     const val = (id) => el(id)?.value?.trim() || '';
     const input = {
       company: val('#f-company'),
+      companyType: val('#f-company-type'),
       title: val('#f-title'),
       location: val('#f-location'),
       salary: val('#f-salary'),
@@ -726,8 +807,8 @@
       notes: val('#f-notes'),
       sourceSite: val('#f-source'),
       skills: state.skills,
-      sourceUrl: location.href,
-      pageTitle: document.title,
+      sourceUrl: state.source?.url || location.href,
+      pageTitle: state.source ? state.source.pageTitle || '' : document.title,
       screenshot: state.crop,
       aiRaw: state.result ? JSON.stringify(state.result.rawFields || {}) : '',
       aiMeta: state.meta || null,
@@ -746,6 +827,10 @@
       return;
     }
     setPhase('done');
+    if (panelMode) {
+      document.documentElement.removeAttribute('data-workbench-dirty');
+      await chrome.storage.session.remove(`workbenchCapture:${state.source.windowId}`);
+    }
     state.pendingIslandFeedback = '已保存投递记录';
     const dupNote = res.duplicates?.length ? `（已有 ${res.duplicates.length + 1} 条相似记录）` : '';
     const openDash = async () => {
@@ -855,6 +940,30 @@
     }
     return false;
   };
+  if (panelMode) {
+    globalThis.__JDT_PANEL_REVIEW__ = {
+      dirty: () => document.documentElement.dataset.workbenchDirty === 'true',
+      snapshot: () => state.phase !== 'review' ? null : ({requestId:state.panelRequestId,result:state.result,meta:state.meta,settings:state.settings,source:state.source,crop:state.crop,skills:state.skills,fields:[...root.querySelectorAll('input,textarea,select')].map(n=>({id:n.id,value:n.value}))}),
+      restore(saved) {
+        if(!saved)return;
+        this.show(saved);
+        state.skills=saved.skills||state.skills;
+        renderSkills();
+        for(const field of saved.fields||[]){const node=el(`#${field.id}`);if(node)node.value=field.value;}
+        // 恢复出来的企业性质视为用户已确定，避免异步建议覆盖。
+        const typeSelect=el('#f-company-type');
+        if(typeSelect?.value)typeSelect.dispatchEvent(new Event('change'));
+      },
+      show(data) {
+        state.panelRequestId = data.requestId; state.source = data.source; state.result = data.result; state.meta = data.meta;
+        state.settings = data.settings || {}; state.statuses = data.settings?.statuses || [];
+        state.crop = data.crop || ''; state.skills = [...(data.result?.skills || [])];
+        document.getElementById('empty').hidden = true;
+        document.documentElement.dataset.workbenchDirty = 'true';
+        showReview();
+      },
+    };
+  }
   chrome.runtime.onMessage.addListener(messageListener);
   window.addEventListener('pagehide', () => { const id = state.requestId; unmount(); if (id) send({ type: 'ANALYZE_ABORT', requestId: id }); chrome.runtime.onMessage.removeListener(messageListener); delete globalThis.__JDT_OVERLAY_BRIDGE__; delete window.__JDT_OVERLAY_LOADED__; }, { once: true });
 })();

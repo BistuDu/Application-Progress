@@ -1,3 +1,5 @@
+import { createRecordQueue, createImportService } from './lib/application-import-service.js';
+import { openWorkbench, routeWorkbench, switchWorkbenchMode } from './lib/workbench.js';
 /**
  * Service worker：扩展的编排层。
  * 负责截图 → 交给内容脚本框选 → 调用识别接口 → 回传结果 → 落库。
@@ -24,6 +26,7 @@ import {
   updateRecord,
 } from './lib/store.js';
 import { analyzeScreenshot, testConnection, VisionError } from './lib/vision.js';
+import { suggestCompanyType } from './lib/company-type.js';
 import {
   applyOp,
   KnowledgeError,
@@ -54,6 +57,10 @@ import {
 } from './lib/knowledge-ai.js';
 import { createPreferenceStore, hostname } from './lib/island-preferences.js';
 import { siteFromUrl, startOfDay } from './lib/util.js';
+
+const withRecordWrite = createRecordQueue();
+const executeRecordImport = createImportService({ listRecords, saveRecords, getSettings });
+const RECORD_WRITES = new Set(['SAVE_RECORD','UPDATE_RECORD','DELETE_RECORDS','CLEAR_ALL','IMPORT_RECORDS','APPLICATION_IMPORT']);
 
 const BLOCKED_URL = /^(chrome|edge|brave|opera|vivaldi|about|devtools|view-source|chrome-extension|moz-extension|chrome-untrusted):/i;
 const STORE_URL = /^https:\/\/chromewebstore\.google\.com|^https:\/\/chrome\.google\.com\/webstore/i;
@@ -196,7 +203,7 @@ async function startCapture(mode, target = 'job', source = null) {
   };
   try {
     const settings = await getSettings();
-    if (!settings.apiKey) { await openOptions(); return fail('还没有配置 API Key，请先打开扩展设置填写。', { needSetup: true }); }
+    if (!settings.apiKey) { await routeWorkbench('options', tab.windowId); return fail('还没有配置 API Key，请先打开扩展设置填写。', { needSetup: true }); }
     await checkSource();
     let ping;
     try { ping = await chrome.tabs.sendMessage(tab.id, { type: 'JDT_ISLAND_PING' }, { frameId: 0 }); } catch {}
@@ -256,7 +263,17 @@ async function runAnalysis({ requestId, image, pageTitle, pageUrl, sourceSite, t
     };
     const out = await analyzeScreenshot({ ...payload, image });
     if (controller.signal.aborted) return;
-    await deliver(tabId, { type: 'JDT_ANALYZE_RESULT', requestId, ok: true, ...out }, controller.signal);
+    const sourceTab = await chrome.tabs.get(tabId);
+    if (controller.signal.aborted) return;
+    await chrome.storage.session.set({[`workbenchCapture:${sourceTab.windowId}`]: {
+      requestId, result: out.result, meta: out.meta, crop: image,
+      settings: { statuses: settings.statuses, defaultStatus: settings.defaultStatus, warnDuplicate: settings.warnDuplicate,
+        closePanelAfterSave: settings.closePanelAfterSave, autoOpenDashboard: settings.autoOpenDashboard, model: settings.model },
+      source: { tabId, url: pageUrl, pageTitle, windowId: sourceTab.windowId },
+    }});
+    if (controller.signal.aborted) { await chrome.storage.session.remove(`workbenchCapture:${sourceTab.windowId}`); return; }
+    await routeWorkbench('capture', sourceTab.windowId);
+    await deliver(tabId, { type: 'JDT_ANALYZE_RESULT', requestId, ok: true, panel: true, ...out }, controller.signal);
   } catch (err) {
     if (controller.signal.aborted) return;
     const isVision = err instanceof VisionError;
@@ -347,21 +364,12 @@ async function findKnowledgeTabs() {
   return alive;
 }
 
-async function openKnowledge(signal) {
-  const existing = await findKnowledgeTabs();
-  if (signal?.aborted) return fail('已取消识别');
-  if (existing.length) {
-    await chrome.tabs.update(existing[0].id, { active: true });
-    if (existing[0].windowId != null) await chrome.windows.update(existing[0].windowId, { focused: true });
-    return ok({ tabId: existing[0].id, reused: true });
-  }
-  const tab = await chrome.tabs.create({ url: knowledgePageUrl() });
-  return ok({ tabId: tab.id, reused: false });
-}
+async function openKnowledge(_signal, windowId) { return openWorkbench('knowledge', windowId); }
 
 /** 已经开着的知识库页面需要知道有新候选可取。 */
 async function notifyKnowledgePages(message) {
   try {
+    await chrome.runtime.sendMessage(message).catch(() => {});
     const tabs = await findKnowledgeTabs();
     await Promise.all(tabs.map((t) => chrome.tabs.sendMessage(t.id, message).catch(() => {})));
   } catch {
@@ -374,6 +382,7 @@ async function notifyKnowledgePages(message) {
  * 与岗位结果不同：这里绝不写入 lastResult（那是岗位结果的持久化兜底，会留下图片）。
  */
 async function deliverKnowledgeResult(tabId, payload) {
+  if (payload.type === 'JDT_KNOWLEDGE_RESULT') await chrome.runtime.sendMessage(payload).catch(() => {});
   knowledgeResults.set(payload.requestId, payload);
   while (knowledgeResults.size > 20) knowledgeResults.delete(knowledgeResults.keys().next().value);
   try {
@@ -518,8 +527,12 @@ async function runWebQuestionAnalysis({ requestId, image, pageTitle, pageUrl, ta
     if (!candidates.length) {
       throw new ModelError('没有从框选区域里识别到题目，换一个范围再试试。', { code: 'empty', retryable: true });
     }
+    const sourceWindowId = (await chrome.tabs.get(tabId)).windowId;
+    const handoffKey = `${PENDING_KEY}:${sourceWindowId}`;
     await chrome.storage.session.set({
-      [PENDING_KEY]: {
+      [handoffKey]: {
+        destination: 'workbench',
+        windowId: sourceWindowId,
         id: requestId,
         createdAt: Date.now(),
         source: 'web-region',
@@ -527,19 +540,21 @@ async function runWebQuestionAnalysis({ requestId, image, pageTitle, pageUrl, ta
         candidates,
       },
     });
-    if (controller.signal.aborted) { await chrome.storage.session.remove(PENDING_KEY); return; }
+    if (controller.signal.aborted) { await chrome.storage.session.remove(handoffKey); return; }
     await deliverKnowledgeResult(tabId, {
       type: 'JDT_ANALYZE_RESULT',
       requestId,
       ok: true,
       target: 'technical-question',
       handedOff: true,
+      panel: true,
       count: candidates.length,
     });
-    if (controller.signal.aborted) { await chrome.storage.session.remove(PENDING_KEY); return; }
-    await openKnowledge(controller.signal);
-    if (controller.signal.aborted) { await chrome.storage.session.remove(PENDING_KEY); return; }
-    await notifyKnowledgePages({ type: 'JDT_KNOWLEDGE_PENDING' });
+    if (controller.signal.aborted) { await chrome.storage.session.remove(handoffKey); return; }
+    const sourceTab = await chrome.tabs.get(tabId);
+    await routeWorkbench('knowledge', sourceTab.windowId);
+    if (controller.signal.aborted) { await chrome.storage.session.remove(handoffKey); return; }
+    await notifyKnowledgePages({ type: 'JDT_KNOWLEDGE_PENDING', windowId: sourceWindowId });
   } catch (err) {
     if (controller.signal.aborted) return;
     await deliverKnowledgeResult(tabId, {
@@ -590,27 +605,8 @@ async function requestHostPermission(apiBase) {
   }
 }
 
-async function openOptions() {
-  await chrome.runtime.openOptionsPage();
-}
-
-async function openDashboard() {
-  const url = chrome.runtime.getURL('src/dashboard/dashboard.html');
-  const all = await chrome.tabs.query({});
-  const existing = all.filter((tab) => tab.url === url);
-  if (!existing.length) {
-    for (const tab of all) {
-      try { if ((await chrome.tabs.sendMessage(tab.id, { type: 'JDT_DASHBOARD_PING' }))?.dashboard) { existing.push(tab); break; } } catch {}
-    }
-  }
-  if (existing.length) {
-    await chrome.tabs.update(existing[0].id, { active: true });
-    if (existing[0].windowId != null) await chrome.windows.update(existing[0].windowId, { focused: true });
-    return ok({ tabId: existing[0].id, reused: true });
-  }
-  const tab = await chrome.tabs.create({ url });
-  return ok({ tabId: tab.id, reused: false });
-}
+async function openOptions(windowId) { return openWorkbench('options', windowId); }
+async function openDashboard(windowId) { return openWorkbench('dashboard', windowId); }
 
 /* ------------------------------------------------------------------ */
 /* 消息路由                                                            */
@@ -668,6 +664,11 @@ const handlers = {
     return ok({ screenshot: found?.screenshot || '' });
   },
 
+  /** 内容脚本无法直接导入模块，用消息复用同一份企业性质建议逻辑。 */
+  async SUGGEST_COMPANY_TYPE({ company = '', explicitType = '' } = {}) {
+    return ok(suggestCompanyType({ company, explicitType }));
+  },
+
   async GET_RECENT({ limit = 8 } = {}) {
     const records = await listRecords();
     const settings = await getSettings();
@@ -700,12 +701,32 @@ const handlers = {
     return ok({ result: await testConnection(settings) });
   },
 
-  async START_CAPTURE({ mode, target, source }) {
+  async OPEN_WORKBENCH({ view, windowId }) { return openWorkbench(view, windowId); },
+  async SWITCH_WORKBENCH_MODE({ mode, view, windowId, snapshot, extensionSender }) {
+    if (!extensionSender) return fail('仅工作台可切换显示模式');
+    return switchWorkbenchMode({ mode, view, windowId, snapshot });
+  },
+  async WORKBENCH_TRANSFER_READY({ id, extensionSender }) {
+    if (!extensionSender || typeof id !== 'string') return fail('无效的工作台交接');
+    const key = `workbenchTransfer:${id}`;
+    if ((await chrome.storage.session.get(key))[key]) await chrome.storage.session.set({[key]:{status:'ready'}});
+    return ok();
+  },
+  async WORKBENCH_ROUTE({ view, windowId, extensionSender, surface, workbenchTabId }) {
+    if (!extensionSender) return fail('仅工作台可切换此入口');
+    return routeWorkbench(view, windowId, {surface: surface === 'tab' ? 'tab' : 'panel', workbenchTabId});
+  },
+  async START_CAPTURE({ mode, target, source, windowId }) {
+    await openWorkbench(target === 'technical-question' ? 'knowledge' : 'capture', windowId);
+    if (!source && windowId != null) {
+      const [tab] = await chrome.tabs.query({ active: true, windowId });
+      source = tab ? { tabId: tab.id, frameId: 0 } : null;
+    }
     return startCapture(mode, target, source);
   },
 
-  async RECAPTURE({ mode, target, source }) {
-    return startCapture(mode || 'region', target, source);
+  async RECAPTURE({ mode, target, source, tabId, extensionSender }) {
+    return startCapture(mode || 'region', target, source || (extensionSender && tabId != null ? { tabId, frameId: 0 } : null));
   },
 
   async ANALYZE(msg) {
@@ -795,6 +816,13 @@ const handlers = {
     await saveRecords(records);
     await refreshBadge();
     return ok({ added, updated, skipped, message: importSummaryText({ added, updated, skipped }) });
+  },
+
+  async APPLICATION_IMPORT(request) {
+    if (!request.extensionSender) return fail('导入仅允许扩展页面访问。');
+    const result = await executeRecordImport(request);
+    if (result.ok && request.commit) await refreshBadge().catch(() => {});
+    return result;
   },
 
   async STATS() {
@@ -905,34 +933,38 @@ const handlers = {
   },
 
   /** 取走网页框选交接过来的纯文本候选（取走即删，不含图片与文件字节）。 */
-  async KNOWLEDGE_PENDING_TAKE() {
-    const { [PENDING_KEY]: handoff } = await chrome.storage.session.get(PENDING_KEY);
-    if (!handoff) return ok({ handoff: null });
-    await chrome.storage.session.remove(PENDING_KEY);
-    return ok({ handoff });
+  async KNOWLEDGE_PENDING_TAKE({ windowId, embedded }) {
+    return withKnowledgeWrite(async () => {
+      const key = `${PENDING_KEY}:${windowId}`;
+      const found = await chrome.storage.session.get([key, PENDING_KEY]);
+      const activeKey = found[key] ? key : PENDING_KEY;
+      const handoff = found[activeKey];
+      if (!handoff || handoff.windowId != null && handoff.windowId !== windowId || handoff.destination === 'workbench' && !embedded) return ok({ handoff: null });
+      await chrome.storage.session.remove(activeKey);
+      return ok({ handoff });
+    });
   },
 
-  async KNOWLEDGE_PENDING_CLEAR() {
-    await chrome.storage.session.remove(PENDING_KEY);
+  async KNOWLEDGE_PENDING_CLEAR({ windowId }) {
+    await chrome.storage.session.remove(windowId == null ? PENDING_KEY : `${PENDING_KEY}:${windowId}`);
     return ok();
   },
 
-  async OPEN_KNOWLEDGE() {
-    return openKnowledge();
+  async OPEN_KNOWLEDGE({ windowId }) {
+    return openKnowledge(null, windowId);
   },
 
-  async OPEN_DASHBOARD() {
-    return openDashboard();
+  async OPEN_DASHBOARD({ windowId }) {
+    return openDashboard(windowId);
   },
 
-  async OPEN_OPTIONS() {
-    await openOptions();
-    return ok();
+  async OPEN_OPTIONS({ windowId }) {
+    return openOptions(windowId);
   },
 
   /** 内容脚本上报"已保存"，用于可选地打开进度表 */
-  async AFTER_SAVE({ openDashboard: shouldOpen }) {
-    if (shouldOpen) await openDashboard();
+  async AFTER_SAVE({ openDashboard: shouldOpen, windowId }) {
+    if (shouldOpen) await routeWorkbench('dashboard', windowId);
     return ok();
   },
 };
@@ -948,8 +980,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 内容脚本发来的消息补上标签页信息
   const isExtensionPage = sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
   const source = sender?.tab && !isExtensionPage ? { tabId: sender.tab.id, frameId: sender.frameId, url: sender.url, documentId: sender.documentId } : null;
-  const enriched = { ...msg, tabId: sender?.tab?.id ?? msg.tabId ?? null, senderUrl: sender?.tab?.url || '', source, extensionSender: !!isExtensionPage };
-  Promise.resolve(handler(enriched))
+  const enriched = { ...msg, tabId: sender?.tab?.id ?? msg.tabId ?? null, windowId: sender?.tab?.windowId ?? msg.windowId, senderUrl: sender?.tab?.url || '', source, extensionSender: !!isExtensionPage };
+  Promise.resolve(RECORD_WRITES.has(type) ? withRecordWrite(() => handler(enriched)) : handler(enriched))
     .then((res) => sendResponse(res))
     .catch((err) => sendResponse(fail(err?.message || String(err))));
   return true; // 异步响应
@@ -988,19 +1020,18 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   });
   await Promise.allSettled((await chrome.tabs.query({})).filter((t) => hostname(t.url) && !assertCapturable(t)).map((t) => chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['src/lib/island-core.js', 'src/content/island.js'] })));
   await refreshBadge();
-  const settings = await getSettings();
-  if (details.reason === 'install' || !settings.apiKey) {
-    await openOptions();
+  if (details.reason === 'install') {
+    await chrome.tabs.create({url: chrome.runtime.getURL('src/workbench/workbench.html?view=options')});
   }
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'jdt-open-dashboard') {
-    await openDashboard();
+    await openDashboard(tab?.windowId);
     return;
   }
   if (info.menuItemId === 'jdt-open-knowledge') {
-    await openKnowledge();
+    await openKnowledge(null, tab?.windowId);
     return;
   }
   if (
@@ -1008,6 +1039,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     info.menuItemId === 'jdt-capture-viewport' ||
     info.menuItemId === 'jdt-capture-question'
   ) {
+    await openWorkbench(info.menuItemId === 'jdt-capture-question' ? 'knowledge' : 'capture', tab?.windowId);
     if (tab?.id != null) {
       await chrome.tabs.update(tab.id, { active: true });
     }
@@ -1018,8 +1050,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
-  if (command === 'capture-region') await startCapture('region');
-  else if (command === 'capture-viewport') await startCapture('viewport');
+  if (command === 'capture-region' || command === 'capture-viewport') {
+    await openWorkbench('capture');
+    await startCapture(command === 'capture-region' ? 'region' : 'viewport');
+  }
   else if (command === 'open-dashboard') await openDashboard();
 });
 

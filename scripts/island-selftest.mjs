@@ -54,9 +54,10 @@ let active={id:1,windowId:2,url:'https://example.com/job',active:true};
 const storage={get:async key=> typeof key==='string'?{[key]:local[key]}:{...local},set:async patch=>{if(writeFail)throw Error('disk unavailable');Object.assign(local,structuredClone(patch));},remove:async key=>{delete local[key];}};
 globalThis.chrome={
  storage:{local:storage,session:storage,onChanged:{addListener(){}}},
- runtime:{id:'island-test',getURL:p=>`chrome-extension://island-test/${p}`,onMessage:{addListener:f=>messages.push(f)},onInstalled:{addListener:f=>installed.push(f)},onStartup:{addListener(){}},getPlatformInfo:async()=>({}),openOptionsPage:async()=>{}},
+ sidePanel:{open:async()=>{}},
+ runtime:{sendMessage:async()=>({}),id:'island-test',getURL:p=>`chrome-extension://island-test/${p}`,onMessage:{addListener:f=>messages.push(f)},onInstalled:{addListener:f=>installed.push(f)},onStartup:{addListener(){}},getPlatformInfo:async()=>({}),openOptionsPage:async()=>{}},
  tabs:{TAB_ID_NONE:-1,get:async()=>active,query:async()=>[active],onRemoved:{addListener(){}},onUpdated:{addListener(){}},create:async()=>({id:5}),update:async()=>{},sendMessage:async(id,msg)=>{if(msg.type==='JDT_ISLAND_PING')return{pong:true,documentId:'doc-1'};if(msg.type==='JDT_ISLAND_PREPARE')return{ok:true,documentId:'doc-1'};if(msg.type==='JDT_PING')return{pong:true};return{ok:true};},captureVisibleTab:async()=>{if(captureFail)throw Error('capture unavailable');captureCount++;return'data:image/jpeg;base64,AAAA';}},
- windows:{get:async()=>({focused:true}),update:async()=>{}},permissions:{contains:async()=>true},scripting:{executeScript:async()=>{}},notifications:{create:async()=>{}},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}},contextMenus:{onClicked:{addListener:f=>menus.push(f)},removeAll:async()=>{},create(){}},commands:{onCommand:{addListener:f=>commands.push(f)}}
+ windows:{getLastFocused:async()=>({id:2}),get:async()=>({focused:true}),update:async()=>{}},permissions:{contains:async()=>true},scripting:{executeScript:async()=>{}},notifications:{create:async()=>{}},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}},contextMenus:{onClicked:{addListener:f=>menus.push(f)},removeAll:async()=>{},create(){}},commands:{onCommand:{addListener:f=>commands.push(f)}}
 };
 await import('../src/background.js');
 const pageSender={id:'island-test',url:active.url,frameId:0,tab:active};

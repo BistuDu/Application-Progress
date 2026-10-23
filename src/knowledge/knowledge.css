@@ -96,6 +96,11 @@ main { padding: 14px 20px 40px; }
 .layout { display: grid; gap: 14px; align-items: start; }
 #view-projects { grid-template-columns: 300px minmax(0, 1fr); }
 #view-technical { grid-template-columns: 180px 320px minmax(0, 1fr); }
+#view-projects.sidebar-collapsed, #view-technical.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+.layout.sidebar-collapsed > .side { display: none; }
+.sidebar-toggle { flex-shrink: 0; width: 34px; height: 34px; border: 1px solid var(--line); background: var(--card); }
+.sidebar-toggle[aria-expanded="false"] svg { transform: scaleX(-1); }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
 
 .side, .pane {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -327,3 +332,18 @@ main { padding: 14px 20px 40px; }
 .md-toolbar [data-md-command="accent-blue"] {color:#245cba;font-weight:600;}
 .md-toolbar [data-md-command="accent-red"] {color:#ad3434;font-weight:600;}
 .md-toolbar [data-md-command="accent-green"] {color:#247353;font-weight:600;}
+
+/* The side-panel shell owns global navigation. */
+.in-sidepanel #btn-dashboard,.in-sidepanel #btn-options{display:none}
+@media(max-width:700px){
+ .topbar{gap:8px;padding:10px}.brand{flex:1}.brand p{max-width:220px}.brand h1{font-size:14px}
+ .tabs{width:100%;order:2}.tabs button{flex:1}.top-actions{order:3;gap:5px}
+ .top-actions .btn{padding:6px 8px;font-size:12px}.top-actions .menu-wrap{flex:1}
+ main{padding:10px 8px 80px}
+ #view-projects,#view-technical{grid-template-columns:minmax(0,1fr)}
+ .side,.side-narrow{position:static;max-height:230px}.side-list{max-height:270px}
+ .pane{max-height:none}.pane-body{overflow:visible;padding:10px}.d-head{flex-wrap:wrap;padding:10px}.d-head h2{flex-basis:100%}
+ .modal{padding:8px}.modal-card{max-height:96vh}.grid2{grid-template-columns:minmax(0,1fr)}
+ .review-shell{padding:12px 8px}.review-card{padding:14px}.review-settings{flex-wrap:wrap}
+ .q-block .q-t{font-size:18px}.q-meta{gap:5px}.floating-new{right:12px;bottom:12px}
+}

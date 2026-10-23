@@ -69,10 +69,13 @@ globalThis.chrome = {
     onStartup: { addListener: () => {} },
     getURL: (p) => `chrome-extension://kbtest/${p}`,
     getPlatformInfo: async () => ({ os: 'mac' }),
+    sendMessage: async () => ({}),
     openOptionsPage: async () => {},
     lastError: null,
   },
+  sidePanel: {open: async () => {}},
   tabs: {
+    get: async (id) => ({id, windowId: 1}),
     onRemoved: { addListener() {} },
     onUpdated: { addListener() {} },
     TAB_ID_NONE: -1,
@@ -84,7 +87,7 @@ globalThis.chrome = {
     },
     captureVisibleTab: async () => 'data:image/jpeg;base64,AAAA',
   },
-  windows: { update: async () => {} },
+  windows: { update: async () => {}, getLastFocused: async () => ({id:1}), getCurrent: async () => ({id:1}) },
   notifications: { create: async () => {} },
   contextMenus: { removeAll: async () => {}, create: () => {}, onClicked: { addListener: () => {} } },
   commands: { onCommand: { addListener: () => {} } },
@@ -954,6 +957,15 @@ section('[10] 网页框选候选交接（session，只含纯文本）');
   const again = await bg({ type: 'KNOWLEDGE_PENDING_TAKE' });
   check('重复取走返回空', again.handoff === null);
   check('交接内容不含图片或文件字节', !JSON.stringify(taken.handoff).includes('data:'));
+  memory.session['knowledgePending:1']={id:'one',windowId:1,destination:'workbench',candidates:[{question:'窗口一'}]};
+  memory.session['knowledgePending:2']={id:'two',windowId:2,destination:'workbench',candidates:[{question:'窗口二'}]};
+  const legacy=await bg({type:'KNOWLEDGE_PENDING_TAKE',windowId:1});
+  check('独立页面不抢走侧栏候选',legacy.handoff===null&&!!memory.session['knowledgePending:1']);
+  const scoped=await bg({type:'KNOWLEDGE_PENDING_TAKE',windowId:1,embedded:true});
+  check('侧栏只取当前窗口候选',scoped.handoff.id==='one'&&memory.session['knowledgePending:1']===undefined&&memory.session['knowledgePending:2'].id==='two');
+  await bg({type:'KNOWLEDGE_PENDING_CLEAR',windowId:2});
+  check('清理候选按窗口隔离',memory.session['knowledgePending:2']===undefined);
+
 }
 
 /* ------------------------------------------------------------------ */

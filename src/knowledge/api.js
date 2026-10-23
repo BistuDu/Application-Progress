@@ -1,3 +1,4 @@
+import { navigate } from '../workbench/navigation.js';
 /**
  * 知识库页面 ↔ background 的消息桥。
  *
@@ -133,22 +134,23 @@ export function startTask(payload, { watchdogMs = 180000 } = {}) {
 
 /** 取走网页框选交接过来的候选（取走即删）。 */
 export async function takePendingHandoff() {
-  const res = await send({ type: 'KNOWLEDGE_PENDING_TAKE' });
+  const windowId = (await chrome.windows.getCurrent()).id;
+  const res = await send({ type: 'KNOWLEDGE_PENDING_TAKE', windowId, embedded: window.parent !== window && new URLSearchParams(location.search).get('surface') === 'panel' });
   return res.ok ? res.handoff : null;
 }
 
 export async function clearPendingHandoff() {
-  await send({ type: 'KNOWLEDGE_PENDING_CLEAR' });
+  await send({ type: 'KNOWLEDGE_PENDING_CLEAR', windowId: (await chrome.windows.getCurrent()).id });
 }
 
 export async function openKnowledge() {
-  return send({ type: 'OPEN_KNOWLEDGE' });
+  return navigate('knowledge');
 }
 
 export async function openDashboard() {
-  return send({ type: 'OPEN_DASHBOARD' });
+  return navigate('dashboard');
 }
 
 export function openOptions() {
-  chrome.runtime.openOptionsPage();
+  return navigate('options');
 }

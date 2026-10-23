@@ -26,7 +26,7 @@
     "type": "module"
   },
   "options_ui": {
-    "page": "src/options/options.html",
+    "page": "src/workbench/workbench.html?view=options",
     "open_in_tab": true
   },
   "permissions": [
@@ -35,7 +35,8 @@
     "activeTab",
     "scripting",
     "contextMenus",
-    "notifications"
+    "notifications",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -94,5 +95,8 @@
       "run_at": "document_idle",
       "all_frames": false
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "src/workbench/workbench.html"
+  }
 }

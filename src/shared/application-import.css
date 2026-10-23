@@ -1,0 +1,16 @@
+.application-import{width:min(820px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;border:1px solid #dbe3ef;border-radius:16px;background:#fff;color:#1e293b;box-shadow:0 20px 80px #0f172a30;font:14px/1.5 system-ui,sans-serif;overflow:hidden}
+.application-import::backdrop{background:#0f172a55}
+.application-import[open]{display:flex;flex-direction:column}
+.application-import header,.application-import footer{display:flex;align-items:center;gap:12px;padding:14px 18px;flex-shrink:0;background:#f8fafc}
+.application-import header{justify-content:space-between;border-bottom:1px solid #e2e8f0}
+.application-import h2{font-size:18px;margin:0}
+.application-import footer{justify-content:flex-end;border-top:1px solid #e2e8f0;flex-wrap:wrap}
+.application-import button,.application-import select{font:inherit;padding:7px 10px;border-radius:8px;border:1px solid #cbd5e1;background:white;color:inherit}
+.application-import button{cursor:pointer}.application-import button:disabled{opacity:.5;cursor:default}
+.application-import [data-commit]{background:#2563eb;color:white;border-color:#2563eb}
+.application-import .import-scroll{overflow:auto;min-height:0;padding:0 18px 18px;overscroll-behavior:contain}
+.application-import .import-file-controls{display:flex;flex-wrap:wrap;gap:12px}.application-import label{display:block}.application-import .import-file-controls label{flex:1;min-width:150px}.application-import .import-file-controls select{display:block;width:100%}
+.application-import input[type=file]{display:block;width:100%;margin-top:8px}.application-import [data-error]{color:#b91c1c;white-space:pre-wrap}
+.application-import .import-map{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0}.application-import .import-map span{overflow-wrap:anywhere;min-width:0}.application-import .import-map select{max-width:55%}
+.application-import .import-row{padding:12px;border:1px solid #e2e8f0;border-radius:10px;margin:10px 0;overflow-wrap:anywhere}.application-import pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}.application-import .import-pager{display:flex;justify-content:center;align-items:center;gap:12px}.application-import [hidden]{display:none!important}
+@media(max-width:480px){.application-import header,.application-import footer{padding:10px}.application-import .import-scroll{padding:0 10px 12px}.application-import .import-file-controls{display:block}.application-import .import-file-controls label{margin:10px 0}.application-import footer{gap:6px}.application-import footer button{flex:1;padding:8px 5px}}

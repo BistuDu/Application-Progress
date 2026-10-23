@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>求职工作台</title><link rel="stylesheet" href="workbench.css"></head>
+<body>
+<header class="workspace-head">
+  <div class="workspace-brand"><img src="../../icons/icon32.png" alt=""><strong>求职工作台</strong></div>
+  <nav class="workspace-tabs" aria-label="工作台导航"><button data-view="dashboard">招聘进度</button><button data-view="knowledge">知识库</button><button data-view="options">设置</button></nav>
+  <div class="capture-actions" aria-label="框选识别">
+    <button data-capture="job" title="框选招聘 JD" aria-label="框选招聘 JD"><span data-icon="scan"></span><span class="capture-label">框选 JD</span></button>
+    <button data-capture="technical-question" title="框选题目" aria-label="框选题目"><span data-icon="info"></span><span class="capture-label">框选题目</span></button>
+    <button data-view="capture" id="capture-tab" title="识别核对" aria-label="识别核对"><span data-icon="eye"></span><span class="capture-label">识别核对</span></button>
+  </div>
+  <div class="workspace-controls">
+    <span id="mode-label">侧栏模式</span>
+    <button id="display-mode" type="button">全屏展开</button>
+    <button id="close" title="关闭侧栏" aria-label="关闭侧栏"><span data-icon="close"></span></button>
+  </div>
+</header>
+<p id="feedback" role="status" hidden></p>
+<main id="pages"></main>
+<script type="module" src="workbench.js"></script>
+</body></html>

@@ -4,10 +4,12 @@
  */
 
 import { DEFAULT_PROMPT, chatUrlCandidates, originPattern } from './settings.js';
+import { normalizeCompanyType } from './company-type.js';
 import { extractSkills, siteFromUrl, sleep, toTs, uniq } from './util.js';
 
 const RESULT_FIELDS = [
   'company',
+  'company_type',
   'title',
   'location',
   'salary',
@@ -136,6 +138,7 @@ export function normalizeResult(raw, fallback = {}) {
   return {
     isJob: raw?.is_job === undefined ? true : Boolean(raw.is_job),
     company,
+    companyType: normalizeCompanyType(get('company_type') || get('companyType')),
     title,
     location: get('location') || get('city') || '',
     salary: get('salary') || get('compensation') || '',

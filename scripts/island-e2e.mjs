@@ -34,8 +34,11 @@ async function launch(){proc=spawn(CHROME,[`--user-data-dir=${PROFILE}`,`--load-
 async function stop(){for(const c of connections)c.close();connections.length=0;sw?.close();await browser?.send('Browser.close').catch(()=>{});browser?.close();if(proc.exitCode===null&&proc.signalCode===null)await new Promise(r=>proc.once('exit',r));await sleep(250);}
 async function open(url){const t=await browser.send('Target.createTarget',{url});const info=await waitFor(async()=> (await httpJson('http://127.0.0.1:9432/json/list')).find(x=>x.id===t.targetId));const c=await CDP.connect(info.webSocketDebuggerUrl);connections.push(c);c.contexts=[];c.on(m=>{if(m.method==='Runtime.executionContextCreated')c.contexts.push(m.params.context);if(m.method==='Runtime.executionContextsCleared')c.contexts=[];});await c.send('Runtime.enable');await c.send('Page.enable');await waitFor(()=>c.eval('document.readyState==="complete"'));return c;}
 const $root=`document.getElementById('jdt-island-host').shadowRoot`;
+async function nativePanel(){const info=await waitFor(async()=>(await httpJson('http://127.0.0.1:9432/json/list')).find(t=>t.url.includes('/workbench/workbench.html')&&!t.url.includes('?view=options')));const c=await CDP.connect(info.webSocketDebuggerUrl);connections.push(c);return c;}
+const panelCapture=`[...document.querySelectorAll('iframe')].find(f=>f.title==='识别核对')?.contentDocument.getElementById('jdt-overlay-host')?.shadowRoot`;
+
 async function context(c){return waitFor(async()=>{for(const x of c.contexts.filter(x=>!x.auxData?.isDefault)){try{if(await c.eval('!!globalThis.__JDT_ISLAND__',{contextId:x.id}))return x.id;}catch{}}});}
-async function islandSend(c,msg){const id=await context(c);return c.eval(`chrome.runtime.sendMessage(${JSON.stringify(msg)})`,{contextId:id});}
+async function islandSend(c,msg){const id=await context(c);return c.eval(`chrome.runtime.sendMessage(${JSON.stringify(msg)})`,{contextId:id,userGesture:msg.type==='START_CAPTURE'||msg.type==='RECAPTURE'});}
 async function ready(c){await waitFor(()=>c.eval(`!!document.getElementById('jdt-island-host')?.shadowRoot`));await sleep(120);}
 async function front(c){await c.send('Page.bringToFront');await sleep(120);}
 async function click(c,sel){const b=await c.eval(`(()=>{const b=${$root}.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2}})()`);await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...b,button:'left',buttons:1,clickCount:1});await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...b,button:'left',buttons:0,clickCount:1});}
@@ -117,12 +120,12 @@ try{
  check('selection hides full island',await a.eval(`getComputedStyle(document.getElementById('jdt-island-host')).visibility==='hidden'`));
  const image=await a.eval(`document.getElementById('jdt-overlay-host').shadowRoot.querySelector('.shot').src`);fs.writeFileSync(path.join(OUT,'captured-without-island.jpg'),Buffer.from(image.split(',')[1],'base64'));
  modelDelay=2000;await select(a);await processing(a);await shot(a,'processing');for(const style of ['dark','dense']){await appearance(a,style==='dark'?'dark':'light');await a.eval(`document.body.className=${JSON.stringify(style)}`);await shot(a,`${style}-processing`);}await a.eval(`document.body.className=''`);check('processing page local and elapsed',await b.eval(`${$root}.querySelector('.surface').classList.contains('collapsed')`)&&await a.eval(`${$root}.querySelector('.elapsed').textContent.includes('秒')`));
- await waitFor(()=>a.eval(`!!document.getElementById('jdt-overlay-host')?.shadowRoot.querySelector('#jdt-save')`));check('JD review hides island, no auto save',await a.eval(`getComputedStyle(document.getElementById('jdt-island-host')).visibility==='hidden'`)&&(await sw.eval(`chrome.storage.local.get('records')`)).records===undefined);
- await a.eval(`document.getElementById('jdt-overlay-host').shadowRoot.querySelector('#jdt-save').click()`);await waitFor(()=>sw.eval(`chrome.storage.local.get('records').then(r=>r.records?.length===1)`));check('explicit save works',true);await sleep(4500);await shot(a,'saved');for(const style of ['dark','dense']){await appearance(a,style==='dark'?'dark':'light');await a.eval(`document.body.className=${JSON.stringify(style)}`);await shot(a,`${style}-saved`);}await a.eval(`document.body.className=''`);check('saved terminal follows actual persistence',await a.eval(`${$root}.querySelector('.status').textContent.includes('已保存')`));await sleep(1900);await closeOverlay(a);await front(a);
+ const native=await nativePanel();await waitFor(()=>native.eval(`!!(${panelCapture})?.querySelector('#jdt-save')`));check('JD review in side panel, no auto save',await a.eval(`!document.getElementById('jdt-overlay-host')`)&&(await sw.eval(`chrome.storage.local.get('records')`)).records===undefined);
+ await native.eval(`(${panelCapture}).querySelector('#jdt-save').click()`);await waitFor(()=>sw.eval(`chrome.storage.local.get('records').then(r=>r.records?.length===1)`));check('explicit save works',true);await sleep(4500);await shot(a,'saved');for(const style of ['dark','dense']){await appearance(a,style==='dark'?'dark':'light');await a.eval(`document.body.className=${JSON.stringify(style)}`);await shot(a,`${style}-saved`);}await a.eval(`document.body.className=''`);check('saved result clears transient screenshot',await sw.eval(`chrome.storage.session.get(null).then(r=>!Object.keys(r).some(k=>k.startsWith('workbenchCapture:')))`));await sleep(1900);await closeOverlay(a);await front(a);
  // Late response cancelled, no records/session/new knowledge page.
  modelDelay=2500;await expand(a);await click(a,'[data-action="question"]');await select(a);await processing(a);await click(a,'.cancel');await shot(a,'cancelled');await sleep(2900);
- check('cancelled question leaves no handoff',!(await sw.eval(`chrome.storage.session.get('knowledgePending')`)).knowledgePending);
- check('late response no knowledge page',!(await httpJson('http://127.0.0.1:9432/json/list')).some(t=>t.url.includes('/knowledge/')));
+ check('cancelled question leaves no handoff',await sw.eval(`chrome.storage.session.get(null).then(r=>!Object.keys(r).some(k=>k.startsWith('knowledgePending')))`));
+ check('late response no candidate review',await native.eval(`![...document.querySelectorAll('iframe')].find(f=>f.title==='面试知识库')?.contentDocument.querySelector('#review-panel:not([hidden])')`));
  check('cancel leaves collapsed usable island',await a.eval(`${$root}.querySelector('.surface').classList.contains('collapsed')`));
  // Disable during processing falls back without cancelling.
  modelDelay=3500;await expand(a);await click(a,'[data-action="job"]');await select(a);await processing(a);await islandSend(a,{type:'ISLAND_SET_SITE',enabled:false});await waitFor(()=>a.eval(`!!document.getElementById('jdt-overlay-host')?.shadowRoot.querySelector('#jdt-abort')`));check('disable switches to original cancel UI',true);await shot(a,'disabled-processing');await a.eval(`document.getElementById('jdt-overlay-host').shadowRoot.querySelector('#jdt-abort').click()`);await sleep(100);check('hidden remains after cancel',await a.eval(`getComputedStyle(document.getElementById('jdt-island-host')).visibility==='hidden'`));
@@ -130,11 +133,12 @@ try{
  await stop();await launch();const restarted=await open('http://127.0.0.1:8782');await ready(restarted);check('disabled survives browser restart',await restarted.eval(`getComputedStyle(document.getElementById('jdt-island-host')).visibility==='hidden'`));
  const options=await open(`chrome-extension://${extId}/src/options/options.html`);await waitFor(()=>options.eval(`!!document.querySelector('#island-sites button')`));await options.eval(`document.querySelector('#island-sites button').click()`);await waitFor(()=>restarted.eval(`getComputedStyle(document.getElementById('jdt-island-host')).visibility==='visible'`));check('options restore hidden host',true);check('extension page has no island',await options.eval(`!document.getElementById('jdt-island-host')`));
  const blank=await open('about:blank');check('built-in page no island',await blank.eval(`!document.getElementById('jdt-island-host')`));
- // Four shortcuts reuse tabs.
- await front(restarted);await expand(restarted);await click(restarted,'[data-action="dashboard"]');await sleep(400);let tabs=await httpJson('http://127.0.0.1:9432/json/list');check('dashboard shortcut opens',tabs.some(t=>t.url.includes('/dashboard/')));
- await front(restarted);await expand(restarted);await click(restarted,'[data-action="dashboard"]');await sleep(300);tabs=await httpJson('http://127.0.0.1:9432/json/list');check('dashboard reuses existing',tabs.filter(t=>t.url.includes('/dashboard/')).length===1);
- await front(restarted);await expand(restarted);await click(restarted,'[data-action="knowledge"]');await sleep(400);check('knowledge shortcut opens',(await httpJson('http://127.0.0.1:9432/json/list')).some(t=>t.url.includes('/knowledge/')));
- await front(restarted);await expand(restarted);await click(restarted,'[data-action="knowledge"]');await sleep(300);check('knowledge reuses existing',(await httpJson('http://127.0.0.1:9432/json/list')).filter(t=>t.url.includes('/knowledge/')).length===1);
+ // Four shortcuts reuse one native side panel.
+ const nativeTabCount=await sw.eval('chrome.tabs.query({}).then(t=>t.length)');
+ await front(restarted);await expand(restarted);await click(restarted,'[data-action="dashboard"]');await sleep(400);const nextPanel=await nativePanel();check('dashboard shortcut opens',await nextPanel.eval(`document.querySelector('[data-view="dashboard"]').getAttribute('aria-current')==='page'`));
+ await front(restarted);await expand(restarted);await click(restarted,'[data-action="dashboard"]');await sleep(300);check('dashboard reuses existing',(await sw.eval('chrome.tabs.query({}).then(t=>t.length)'))===nativeTabCount);
+ await front(restarted);await expand(restarted);await click(restarted,'[data-action="knowledge"]');await sleep(400);check('knowledge shortcut opens',await nextPanel.eval(`document.querySelector('[data-view="knowledge"]').getAttribute('aria-current')==='page'`));
+ await front(restarted);await expand(restarted);await click(restarted,'[data-action="knowledge"]');await sleep(300);check('knowledge reuses existing',(await sw.eval('chrome.tabs.query({}).then(t=>t.length)'))===nativeTabCount);
  // Reduced motion, tooltip and transition frames.
  await front(restarted);await restarted.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await expand(restarted);check('reduced motion no shape animation',await restarted.eval(`getComputedStyle(${$root}.querySelector('.surface')).transitionDuration==='0s'`));await shot(restarted,'reduced-motion');await collapse(restarted);await restarted.send('Emulation.setEmulatedMedia',{features:[]});
  await click(restarted,'.toggle');await shot(restarted,'transition-early');await sleep(100);await shot(restarted,'transition-mid');await sleep(200);await shot(restarted,'transition-final');
@@ -147,7 +151,7 @@ try{
  await restarted.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
  check('Tab reaches shortcut',await restarted.eval(`${$root}.activeElement?.classList.contains('action')`));await collapse(restarted);await sleep(300);
  const togglePoint=await restarted.eval(`(()=>{const b=${$root}.querySelector('.toggle').getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2}})()`);
- await restarted.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:10,y:400});await restarted.send('Input.dispatchMouseEvent',{type:'mouseMoved',...togglePoint});await sleep(550);
+ await front(restarted);await restarted.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:10,y:400});await restarted.send('Input.dispatchMouseEvent',{type:'mouseMoved',...togglePoint});await waitFor(()=>restarted.eval(`${$root}.querySelector('.tip').hidden===false`),{timeoutMs:2500,label:'hover tooltip'});
  check('hover shows tooltip only',await restarted.eval(`!${$root}.querySelector('.tip').hidden&&${$root}.querySelector('.panel').hidden`));await shot(restarted,'tooltip');
  // Pixel audit on a distinctive blue backdrop; both light and dark glass alter these pixels if leaked.
  async function auditShot(c,label){
@@ -159,8 +163,8 @@ try{
  await front(restarted);const popup=await open(`chrome-extension://${extId}/src/popup/popup.html`);await front(restarted);
  await restarted.eval(`(()=>{const d=document.createElement('div');d.id='capture-reference';d.style.cssText='position:fixed;right:0;top:0;width:400px;height:180px;background:rgb(23,92,156);z-index:2147483645;pointer-events:none';document.documentElement.append(d)})()`);
  await expand(restarted);await click(restarted,'.more');await sleep(180);
- await popup.eval(`chrome.runtime.sendMessage({type:'START_CAPTURE',mode:'region'})`);await auditShot(restarted,'toolbar');
- await popup.eval(`chrome.runtime.sendMessage({type:'START_CAPTURE',mode:'region'})`);await auditShot(restarted,'keyboard shared capture');
+ await popup.eval(`chrome.runtime.sendMessage({type:'START_CAPTURE',mode:'region'})`,{userGesture:true});await auditShot(restarted,'toolbar');
+ await popup.eval(`chrome.runtime.sendMessage({type:'START_CAPTURE',mode:'region'})`,{userGesture:true});await auditShot(restarted,'keyboard shared capture');
 
  check('context capture accepted',(await islandSend(restarted,{type:'START_CAPTURE',mode:'region',target:'technical-question'})).ok);await auditShot(restarted,'context-menu shared capture');
  check('recapture accepted',(await islandSend(restarted,{type:'RECAPTURE',mode:'region'})).ok);await auditShot(restarted,'recapture');await restarted.eval(`document.getElementById('capture-reference').remove()`);
@@ -215,7 +219,7 @@ try{
  await front(restarted);
  // Successful question still requires explicit review in knowledge library.
  modelDelay=700;await islandSend(restarted,{type:'START_CAPTURE',mode:'region',target:'technical-question'});await select(restarted);await processing(restarted);
- await waitFor(()=>restarted.eval(`!!document.getElementById('jdt-overlay-host')?.shadowRoot.textContent.includes('已提取')`));check('question success hands candidates to review',true);
+ const lastPanel=await nativePanel();await waitFor(()=>lastPanel.eval(`!![...document.querySelectorAll('iframe')].find(f=>f.title==='面试知识库')?.contentDocument.querySelector('#review-panel:not([hidden])')`));check('question success hands candidates to review',true);
 
  // Missing configuration yields an actionable error and makes no model request.
  await front(restarted);await closeOverlay(restarted);await sleep(1900);

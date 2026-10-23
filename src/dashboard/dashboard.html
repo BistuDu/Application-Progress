@@ -2,67 +2,85 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>投递进度表 · JD 投递追踪</title>
   <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="../shared/application-import.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <img src="../../icons/icon48.png" alt="">
-      <div>
+      <div class="brand-text">
         <h1>投递进度表</h1>
         <p id="brand-sub">—</p>
       </div>
     </div>
     <div class="search">
-      <span class="si">🔍</span>
+      <span class="search-ico" data-icon="search"></span>
       <input id="q" type="search" placeholder="搜索公司、岗位、地点、技能、JD 内容…">
-      <button class="clear" id="q-clear" hidden>✕</button>
+      <button class="clear" id="q-clear" title="清空搜索" aria-label="清空搜索" hidden><span data-icon="close" data-icon-size="14"></span></button>
     </div>
     <div class="top-actions">
-      <button class="btn" id="btn-knowledge">面试知识库</button>
-      <button class="btn" id="btn-add">＋ 手动添加</button>
+      <button class="btn" id="btn-knowledge" aria-label="面试知识库">面试知识库</button>
+      <button class="btn btn-primary" id="btn-add" aria-label="手动添加"><span data-icon="plus"></span><span class="btn-label">手动添加</span></button>
       <div class="menu-wrap">
-        <button class="btn" id="btn-export">导出 ▾</button>
-        <div class="menu" id="export-menu" hidden>
+        <button class="btn" id="btn-export" title="导出" aria-label="导出" aria-haspopup="menu" aria-expanded="false"><span data-icon="download"></span><span class="btn-label">导出</span><span class="chev" data-icon="chevron" data-icon-size="14"></span></button>
+        <div class="menu" id="export-menu" role="menu" hidden>
           <button data-export="csv">导出 CSV（Excel 可开）</button>
           <button data-export="md">导出 Markdown（给 /offer 用）</button>
           <button data-export="json">导出 JSON 备份（含截图）</button>
           <button data-export="clip">复制 Markdown 到剪贴板</button>
         </div>
       </div>
-      <button class="btn" id="btn-import">导入备份</button>
-      <input type="file" id="file-import" accept=".json,application/json" hidden>
-      <button class="icon-btn" id="btn-options" title="设置">⚙</button>
+      <button class="btn" id="btn-import" title="导入" aria-label="导入"><span data-icon="upload"></span><span class="btn-label">导入</span></button>
+      <button class="icon-btn" id="btn-options" title="设置" aria-label="设置"><span data-icon="settings"></span></button>
     </div>
   </header>
 
-  <section class="cards" id="cards"></section>
-
-  <section class="panels">
-    <div class="panel-card">
-      <h2>投递漏斗 <span class="hint">累计走到过该阶段的岗位数，括号内为当前停留在该阶段的数量</span></h2>
-      <div id="funnel" class="funnel"></div>
+  <section class="overview" id="overview" data-expanded="false">
+    <div class="overview-summary">
+      <div class="summary-metrics" id="overview-metrics"></div>
+      <button class="overview-toggle" id="overview-toggle" type="button" aria-expanded="false" aria-controls="overview-body">
+        <span>数据概览</span><span class="chev" data-icon="chevron" data-icon-size="14"></span>
+      </button>
     </div>
-    <div class="panel-card">
-      <h2>近 8 周新增 <span class="hint">每周记录的岗位数</span></h2>
-      <div id="trend" class="trend"></div>
-    </div>
-    <div class="panel-card">
-      <h2>来源分布</h2>
-      <div id="sites" class="bars"></div>
-    </div>
-    <div class="panel-card">
-      <h2>高频技能关键词 <span class="hint">帮你找复习重点</span></h2>
-      <div id="skills" class="chips"></div>
+    <div class="overview-body" id="overview-body" hidden>
+      <section class="cards" id="cards"></section>
+      <section class="panels">
+        <div class="panel-card">
+          <h2>投递漏斗 <span class="hint">累计走到过该阶段的岗位数，括号内为当前停留在该阶段的数量</span></h2>
+          <div id="funnel" class="funnel"></div>
+        </div>
+        <div class="panel-card">
+          <h2>近 8 周新增 <span class="hint">每周记录的岗位数</span></h2>
+          <div id="trend" class="trend"></div>
+        </div>
+        <div class="panel-card">
+          <h2>来源分布</h2>
+          <div id="sites" class="bars"></div>
+        </div>
+        <div class="panel-card">
+          <h2>高频技能关键词 <span class="hint">帮你找复习重点</span></h2>
+          <div id="skills" class="chips"></div>
+        </div>
+      </section>
     </div>
   </section>
 
   <section class="filters">
-    <div class="chips" id="status-filter"></div>
+    <div class="chips status-chips" id="status-filter"></div>
     <div class="filter-right">
-      <select id="f-source"><option value="">全部来源</option></select>
-      <select id="f-range">
+      <select id="f-company-type" aria-label="企业性质">
+        <option value="">全部性质</option>
+        <option value="央企">央企</option>
+        <option value="国企">国企</option>
+        <option value="私企">私企</option>
+        <option value="其他">其他</option>
+        <option value="__unset__">未标注</option>
+      </select>
+      <select id="f-source" aria-label="来源"><option value="">全部来源</option></select>
+      <select id="f-range" aria-label="时间范围">
         <option value="">全部时间</option>
         <option value="7">近 7 天</option>
         <option value="30">近 30 天</option>
@@ -70,7 +88,7 @@
         <option value="week">本周</option>
         <option value="month">本月</option>
       </select>
-      <select id="f-sort">
+      <select id="f-sort" aria-label="排序方式">
         <option value="createdAt-desc">按记录时间 ↓</option>
         <option value="createdAt-asc">按记录时间 ↑</option>
         <option value="appliedAt-desc">按投递时间 ↓</option>
@@ -79,6 +97,7 @@
         <option value="status-asc">按状态</option>
       </select>
       <label class="check"><input type="checkbox" id="f-todo"> 只看有下一步的</label>
+      <button class="btn btn-ghost filter-columns" id="btn-columns-bar" type="button" title="选择显示列与调整列宽" aria-label="列设置" aria-haspopup="dialog" aria-expanded="false"><span data-icon="columns" data-icon-size="14"></span><span>列设置</span></button>
       <span class="count" id="count"></span>
     </div>
   </section>
@@ -90,26 +109,16 @@
       <button class="btn btn-danger" id="batch-delete">删除所选</button>
       <button class="btn btn-ghost" id="batch-clear">取消选择</button>
     </div>
-    <table id="table">
-      <thead>
-        <tr>
-          <th class="c-check"><input type="checkbox" id="check-all"></th>
-          <th class="c-time">记录时间</th>
-          <th>公司 / 岗位</th>
-          <th class="c-loc">地点</th>
-          <th class="c-salary">薪资</th>
-          <th class="c-status">状态</th>
-          <th class="c-applied">投递日期</th>
-          <th class="c-source">来源</th>
-          <th class="c-act"></th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div class="empty" id="empty" hidden>
-      <div class="em-ico">📋</div>
-      <h3>还没有记录</h3>
-      <p>在招聘页面点扩展图标 → 「框选识别 JD」，截图里的岗位就会自动变成一条记录。</p>
+    <div class="table-scroll" id="table-scroll">
+      <table id="table">
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>
+        <div class="em-ico" data-icon="search" data-icon-size="30"></div>
+        <h3>还没有记录</h3>
+        <p>在招聘页面点扩展图标 → 「框选识别 JD」，截图里的岗位就会自动变成一条记录。</p>
+      </div>
     </div>
   </section>
 
@@ -117,7 +126,7 @@
   <aside class="drawer" id="drawer" hidden>
     <div class="d-head">
       <h2 id="d-title">详情</h2>
-      <button class="icon-btn" id="d-close">✕</button>
+      <button class="icon-btn" id="d-close" title="关闭" aria-label="关闭详情"><span data-icon="close"></span></button>
     </div>
     <div class="d-body" id="d-body"></div>
     <div class="d-foot">
@@ -132,15 +141,16 @@
     <div class="modal-card">
       <div class="m-head">
         <h2>手动添加记录</h2>
-        <button class="icon-btn" id="m-close">✕</button>
+        <button class="icon-btn" id="m-close" title="关闭" aria-label="关闭"><span data-icon="close"></span></button>
       </div>
       <div class="m-body">
         <div class="grid">
           <label class="field full"><span>公司名称</span><input id="m-company" placeholder="字节跳动"></label>
           <label class="field full"><span>岗位名称</span><input id="m-title" placeholder="后端开发实习生"></label>
+          <label class="field"><span>企业性质</span><select id="m-company-type"></select><small class="field-hint" id="m-company-type-hint"></small></label>
+          <label class="field"><span>状态</span><select id="m-status"></select></label>
           <label class="field"><span>地点</span><input id="m-location" placeholder="北京"></label>
           <label class="field"><span>薪资</span><input id="m-salary" placeholder="300-400/天"></label>
-          <label class="field"><span>状态</span><select id="m-status"></select></label>
           <label class="field"><span>投递日期</span><input id="m-applied" type="date"></label>
           <label class="field full"><span>下一步</span><input id="m-next" placeholder="9/20 前完成测评"></label>
           <label class="field full"><span>JD 正文</span><textarea id="m-jd" rows="4"></textarea></label>
@@ -151,6 +161,22 @@
         <button class="btn btn-ghost" id="m-cancel">取消</button>
         <button class="btn btn-primary" id="m-save">添加</button>
       </div>
+    </div>
+  </div>
+
+  <div class="column-pop" id="column-pop" hidden role="dialog" aria-label="列设置">
+    <div class="cp-head">
+      <strong>显示列</strong>
+      <button class="icon-btn" id="cp-close" title="关闭列设置" aria-label="关闭列设置"><span data-icon="close"></span></button>
+    </div>
+    <p class="cp-hint">勾选显示列，拖拽排序；拖动表头右边缘调整列宽，双击复位。侧栏会自动隐藏低优先级列。</p>
+    <input class="cp-search" id="cp-search" type="search" placeholder="搜索列…" aria-label="搜索列">
+    <div class="cp-list" id="cp-list"></div>
+    <div class="cp-foot">
+      <button class="btn btn-ghost" id="cp-reset">恢复默认</button>
+      <button class="btn btn-ghost" id="cp-show-all">全部显示</button>
+      <span class="grow"></span>
+      <span class="cp-count" id="cp-count"></span>
     </div>
   </div>
 

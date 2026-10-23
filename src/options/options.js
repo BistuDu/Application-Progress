@@ -1,3 +1,7 @@
+import { openApplicationImport } from '../shared/application-import.js';
+import { registerViewState } from '../workbench/view-state.js';
+import { installNavigation, navigate } from '../workbench/navigation.js';
+installNavigation('options');
 /**
  * 设置页：接口配置、测试连接、截图参数、状态词表、提示词、数据管理。
  */
@@ -100,6 +104,7 @@ async function save({ silent = false } = {}) {
     return null;
   }
   settings = res.settings;
+  document.documentElement.removeAttribute('data-workbench-dirty');
   if ($('apiKey').value !== (settings.apiKey || '')) $('apiKey').value = settings.apiKey || '';
   fillForm(settings);
   if (!silent) toast('已保存', 'ok');
@@ -223,22 +228,7 @@ $('export-md').addEventListener('click', async () => {
   toast('已导出 Markdown', 'ok');
 });
 
-$('import').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    const records = Array.isArray(data) ? data : data.records;
-    if (!Array.isArray(records)) throw new Error('文件里没有 records 数组。');
-    const res = await send({ type: 'IMPORT_RECORDS', records });
-    toast(res.ok ? res.message : res.error, res.ok ? 'ok' : 'err', 5000);
-    await refreshStorageInfo();
-  } catch (err) {
-    toast(`导入失败：${err.message}`, 'err', 5000);
-  }
-});
+$('import').addEventListener('click', () => openApplicationImport({ onSuccess: () => refreshStorageInfo() }));
 
 $('clear').addEventListener('click', async () => {
   const first = confirm('这会删除全部投递记录（含截图），不可恢复。\n建议先「导出全部数据」备份。确定继续？');
@@ -275,7 +265,7 @@ $('reset-prompt').addEventListener('click', () => {
 });
 
 $('save').addEventListener('click', () => save());
-$('open-dashboard').addEventListener('click', () => send({ type: 'OPEN_DASHBOARD' }));
+$('open-dashboard').addEventListener('click', () => navigate('dashboard'));
 
 $('apiBase').addEventListener('change', () => {
   const candidates = chatUrlCandidates($('apiBase').value);
@@ -312,6 +302,7 @@ document.querySelectorAll('input, select, textarea').forEach((node) => {
   await refreshStorageInfo();
   $('apiBase').title = `实际请求：${chatUrlCandidates(settings.apiBase)[0] || ''}`;
   void recordsCache;
+  registerViewState(()=>null,()=>{});
 })();
 
 async function renderIslandSites() {
@@ -330,3 +321,5 @@ async function renderIslandSites() {
 $('island-reset').addEventListener('click', async () => { const r = await send({ type: 'ISLAND_RESET_POSITION' }); setStatus('island-hint', r.ok ? '位置已重置' : r.error, r.ok ? 'ok' : 'err'); });
 chrome.storage.onChanged.addListener((c) => { if (c.islandPreferences) renderIslandSites(); });
 renderIslandSites();
+
+document.querySelector('main').addEventListener('input',()=>{document.documentElement.dataset.workbenchDirty='true';});

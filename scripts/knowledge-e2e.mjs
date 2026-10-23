@@ -1066,25 +1066,24 @@ try {
       await sleeps(25);
     }
     await qPage.conn.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x1, y: rect.y1, button: 'left', buttons: 0, clickCount: 1 });
-    const handoffCard = await waitFor(
-      () => qPage.conn.eval(`(() => { const r = document.getElementById('jdt-overlay-host'); return r ? (r.shadowRoot.textContent || '') : ''; })()`).then((t) => (/已提取|识别失败/.test(t) ? t : false)),
-      { timeoutMs: 150000, intervalMs: 700, label: '框选识别结果' },
-    ).catch(() => '(没有拿到结果)');
-    console.log(`  · 页面内提示：${String(handoffCard).replace(/\s+/g, ' ').slice(0, 80)}`);
-    const kbTabs = (await httpJson(`http://127.0.0.1:${PORT}/json/list`)).filter((t) => t.url.includes('knowledge/knowledge.html')).length;
-    console.log(`  · 知识库标签页数量：${kbTabs}`);
-    const reviewUp = await waitFor(async () => evaluate(`__kb.reviewOpen()`), { timeoutMs: 20000, intervalMs: 600, label: '知识库核对面板' }).catch(() => false);
-    check('框选结果在知识库页面进入核对面板', reviewUp === true, reviewUp ? '' : `toast=${(await evaluate(`__kb.text('#toasts')`)).slice(0, 60)} banner=${(await evaluate(`__kb.text('#banner')`)).slice(0, 80)}`);
-    if (reviewUp) {
-      const panel = await evaluate(`__kb.reviewText()`);
-      const webQuestions = JSON.parse(await evaluate(`JSON.stringify(__kb.reviewQuestions())`));
-      check('候选带网页来源', /网页框选/.test(panel), panel.slice(0, 140).replace(/\n/g, ' '));
-      check('候选含识别出的题目', webQuestions.length >= 1 && webQuestions.some((q) => /索引|回表|TCP|握手|数据库/.test(q)), webQuestions.join(' | ').slice(0, 140));
-      await evaluate(`__kb.reviewCancel(); true`);
-      await sleeps(400);
+    const sideTarget=await waitFor(async()=>(await httpJson(`http://127.0.0.1:${PORT}/json/list`)).find(t=>t.url.includes('/workbench/workbench.html')&&!t.url.includes('?view=options')));
+    const side=await CDP.connect(sideTarget.webSocketDebuggerUrl);
+    const sideContexts=[];side.on(m=>{if(m.method==='Runtime.executionContextCreated')sideContexts.push(m.params.context);});await side.send('Runtime.enable');await side.send('Page.enable');
+    const frame=await waitFor(async()=>{const tree=await side.send('Page.getFrameTree');return tree.frameTree.childFrames?.find(f=>f.frame.url.includes('/knowledge/knowledge.html'))?.frame;});
+    const ctx=await waitFor(()=>sideContexts.find(c=>c.auxData?.frameId===frame.id&&c.auxData?.isDefault));
+    await side.eval(inPageHelpers,{contextId:ctx.id});
+    const sideEval=expr=>side.eval(expr,{contextId:ctx.id});
+    const reviewUp=await waitFor(()=>sideEval('__kb.reviewOpen()'),{timeoutMs:150000,intervalMs:700,label:'侧栏候选核对'}).catch(()=>false);
+    check('框选结果在原生侧栏进入核对面板',reviewUp===true);
+    if(reviewUp){
+      const panel=await sideEval('__kb.reviewText()');const webQuestions=JSON.parse(await sideEval('JSON.stringify(__kb.reviewQuestions())'));
+      check('候选带网页来源',/网页框选/.test(panel),panel.slice(0,140));
+      check('候选含识别出的题目',webQuestions.length>=1&&webQuestions.some(q=>/索引|回表|TCP|握手|数据库/.test(q)),webQuestions.join(' | ').slice(0,140));
+      await sideEval('__kb.reviewCancel(); true');await sleeps(400);
     }
-    const handoffLeft = await sw.eval('chrome.storage.session.get("knowledgePending").then(o=>JSON.stringify(o.knowledgePending||null))');
-    check('交接候选在处理后从 session 清掉', handoffLeft === 'null', String(handoffLeft).slice(0, 80));
+    side.close();
+    const handoffLeft = await sw.eval('chrome.storage.session.get(null).then(o=>JSON.stringify(Object.keys(o).filter(k=>k.startsWith("knowledgePending"))))');
+    check('交接候选在处理后从 session 清掉', handoffLeft === '[]', String(handoffLeft).slice(0, 80));
   } else {
     skip('网页框选（需要模型）');
   }
@@ -1338,6 +1337,26 @@ try {
   await evaluate(`document.querySelector('#tabs [data-view="projects"]').click();true`);await sleeps(300);
   await evaluate(`Array.from(document.querySelectorAll('#proj-list [data-pid]')).find(e=>e.dataset.pid===${JSON.stringify(projectId)}).click();true`);
   check('进入项目答案默认折叠',await evaluate(`Array.from(document.querySelectorAll('#proj-detail .q-toggle')).length===2 && Array.from(document.querySelectorAll('#proj-detail .q-toggle')).every(e=>e.getAttribute('aria-expanded')==='false')`));
+  const detailWidth = await evaluate(`document.querySelector('#proj-detail').getBoundingClientRect().width`);
+  await evaluate(`document.querySelector('#btn-sidebar').click();true`);
+  check('项目侧栏折叠且正文扩展',await evaluate(`getComputedStyle(document.querySelector('#project-sidebar')).display==='none' && document.querySelector('#proj-detail').getBoundingClientRect().width>${detailWidth}+250 && document.querySelector('#btn-sidebar').getAttribute('aria-expanded')==='false'`));
+  await shot(kb,'kb-18-sidebar-collapsed.jpg');
+  await kb.send('Page.reload');await sleeps(700);await kb.eval(inPageHelpers);
+  check('刷新后记住项目侧栏折叠',await evaluate(`document.querySelector('#view-projects').classList.contains('sidebar-collapsed') && document.querySelector('#btn-sidebar').title==='展开左侧栏'`));
+  await evaluate(`document.querySelector('#tabs [data-view="technical"]').click();true`);
+  check('两库独立记住侧栏状态',await evaluate(`!document.querySelector('#view-technical').classList.contains('sidebar-collapsed')`));
+  await evaluate(`document.querySelector('#btn-sidebar').click();true`);
+  check('题库分类和题目列表一起收起',await evaluate(`['category-sidebar','question-sidebar'].every(id=>getComputedStyle(document.getElementById(id)).display==='none') && document.querySelector('#btn-sidebar').getAttribute('aria-controls')==='category-sidebar question-sidebar'`));
+  await evaluate(`document.querySelector('#bank-review').click();true`);
+  check('每日复习不展示无用侧栏按钮',await evaluate(`document.querySelector('#btn-sidebar').hidden`));
+  await evaluate(`document.querySelector('#bank-browse').click();document.querySelector('#btn-sidebar').click();document.querySelector('#tabs [data-view="projects"]').click();document.querySelector('#btn-sidebar').click();Array.from(document.querySelectorAll('#proj-list [data-pid]')).find(e=>e.dataset.pid===${JSON.stringify(projectId)}).click();document.querySelector('#proj-detail [data-act="edit"]').click();window.__sidebarEditor=document.querySelector('#ed-answer');true`);
+  await kb.send('Page.bringToFront');await sleeps(150);
+  await evaluate(`document.querySelector('#btn-sidebar').focus();true`);
+  await kb.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+  await kb.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  check('键盘可折叠且保留原编辑器和草稿',await evaluate(`document.querySelector('#btn-sidebar').getAttribute('aria-expanded')==='false' && document.querySelector('#ed-answer')===window.__sidebarEditor && window.__sidebarEditor.value===${JSON.stringify(longAnswer)}`));
+  await evaluate(`document.querySelector('#btn-sidebar').click();document.querySelector('#proj-detail [data-act="cancel"]').click();true`);
+  check('展开后恢复侧栏及原项目选择',await evaluate(`getComputedStyle(document.querySelector('#project-sidebar')).display!=='none' && document.querySelector('#proj-list [data-pid="${projectId}"]').classList.contains('active')`));
   const originalOrder=(await loadState()).projectQuestions.filter(q=>q.projectId===projectId).map(q=>q.id);
   const grip=await evaluate(`(()=>{const r=document.querySelector('#proj-detail .sort-handle').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   const dropPoint=await evaluate(`(()=>{const r=document.querySelectorAll('#proj-detail [data-sort-id]')[1].getBoundingClientRect();return {x:r.x+80,y:r.bottom-10}})()`);
@@ -1411,6 +1430,27 @@ try {
   await evaluate(`window.confirm=()=>true;document.querySelector('#ed-answer').focus();true`);
   await kb.send('Input.dispatchKeyEvent',{type:'keyDown',key:'s',code:'KeyS',modifiers:4});await kb.send('Input.dispatchKeyEvent',{type:'keyUp',key:'s',code:'KeyS',modifiers:0});await sleeps(450);
   check('保存编辑后回到阅读且固定新建恢复',await evaluate(`!document.querySelector('#proj-detail #ed-answer')&&!document.querySelector('#floating-new').hidden&&document.querySelector('#proj-detail .q-toggle').getAttribute('aria-expanded')==='true'`));
+  // A card deep in a long project list must not jump back to the first question.
+  const positionResult=await request('projectQuestion.create',{projectId,question:'滚动位置目标题',answerMarkdown:'保存后继续停留在当前阅读位置。'});
+  const positionId=positionResult.result.question.id;
+  await request('projectQuestion.create',{projectId,question:'后续长答案',answerMarkdown:longAnswer});await sleeps(250);
+  await evaluate(`document.querySelector('#proj-detail [data-bulk="expand"]').click();true`);
+  await evaluate(`(()=>{const p=document.querySelector('#proj-detail .pane-body'),q=document.querySelector('[data-qid="${positionId}"]');p.scrollTop=q.getBoundingClientRect().top-p.getBoundingClientRect().top+p.scrollTop-90;window.scrollTo(0,20);window.__positionBefore={top:p.scrollTop,page:scrollY};q.querySelector('[data-act="edit"]').click();return true})()`);await sleeps(120);
+  check('长项目列表点击编辑保持详情与页面位置',await evaluate(`(()=>{const p=document.querySelector('#proj-detail .pane-body');return __positionBefore.top>500&&Math.abs(p.scrollTop-__positionBefore.top)<=1&&Math.abs(scrollY-__positionBefore.page)<=1&&!!document.querySelector('[data-qid="${positionId}"] #ed-answer')})()`));
+  await evaluate(`(()=>{const p=document.querySelector('#proj-detail .pane-body');window.__positionSave={top:p.scrollTop,page:scrollY};document.querySelector('[data-qid="${positionId}"] [data-act="save"]').click();return true})()`);await sleeps(450);
+  check('长项目列表保存及存储回写保持当前位置',await evaluate(`(()=>{const p=document.querySelector('#proj-detail .pane-body');return Math.abs(p.scrollTop-__positionSave.top)<=1&&Math.abs(scrollY-__positionSave.page)<=1&&!document.querySelector('#ed-answer')})()`));
+  check('本页保存回写不误报其他页面更新',await evaluate(`document.querySelector('#banner').hidden||!document.querySelector('#banner').textContent.includes('其他页面更新')`));
+  await shot(kb,'kb-17-save-position.jpg');
+  const technicalPosition=await request('technicalQuestion.create',{question:'八股滚动位置目标题',answerMarkdown:longAnswer});
+  await evaluate(`document.querySelector('#tabs [data-view="technical"]').click();true`);await sleeps(200);
+  await evaluate(`Array.from(document.querySelectorAll('#tq-list [data-tid]')).find(n=>n.dataset.tid===${JSON.stringify(technicalPosition.result.question.id)}).click();document.querySelector('#tq-detail [data-toggle-answer]').click();const p=document.querySelector('#tq-detail .pane-body');p.scrollTop=100;window.scrollTo(0,20);window.__technicalBefore={top:p.scrollTop,page:scrollY};document.querySelector('#tq-detail [data-act="edit"]').click();true`);await sleeps(100);
+  check('八股点击编辑保留可用范围内滚动位置',await evaluate(`(()=>{const p=document.querySelector('#tq-detail .pane-body');return Math.abs(p.scrollTop-Math.min(__technicalBefore.top,p.scrollHeight-p.clientHeight))<=1&&Math.abs(scrollY-__technicalBefore.page)<=1})()`));
+  const editingDraft=longAnswer+'\n\n未保存草稿仍保留';
+  await evaluate(`(()=>{__kb.setMarkdown(${JSON.stringify(editingDraft)});const a=document.querySelector('#ed-answer');a.focus({preventScroll:true});a.setSelectionRange(50,60);a.scrollTop=450;window.__draftScroll=a.scrollTop;return true})()`);
+  await request('category.create',{name:'滚动回归分类'});await sleeps(300);
+  check('同题后台刷新保留草稿光标和源码滚动',await evaluate(`(()=>{const a=document.querySelector('#ed-answer');return a.value.endsWith('未保存草稿仍保留')&&a.selectionStart===50&&a.selectionEnd===60&&Math.abs(a.scrollTop-__draftScroll)<=1})()`));
+  await evaluate(`(()=>{const p=document.querySelector('#tq-detail .pane-body');window.__technicalSave={top:p.scrollTop,page:scrollY};document.querySelector('#tq-detail [data-act="save"]').click();return true})()`);await sleeps(450);
+  check('八股保存后页面不回到顶部',await evaluate(`(()=>{const p=document.querySelector('#tq-detail .pane-body');return Math.abs(p.scrollTop-Math.min(__technicalSave.top,p.scrollHeight-p.clientHeight))<=1&&Math.abs(scrollY-__technicalSave.page)<=1&&!document.querySelector('#ed-answer')})()`));
   const catResult=await request('category.create',{name:'每日验收'}),cat=catResult.result.category.id;
   for(let n=1;n<=3;n++)await request('technicalQuestion.create',{question:`每日复习题 ${n}：为什么选这个技术方案？`,answerMarkdown:n===3?'':'## 参考答案\n\n- 适合当前约束\n- 明确替代方案与取舍\n\n```js\nconst reliable = true;\n```',categoryId:cat,tags:['实践']});
   await evaluate(`window.scrollTo(0,0);document.querySelector('#tabs [data-view="technical"]').click();true`);await sleeps(300);

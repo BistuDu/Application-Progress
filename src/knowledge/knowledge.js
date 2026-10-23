@@ -1,3 +1,6 @@
+import { registerViewState } from '../workbench/view-state.js';
+import { installNavigation, navigate } from '../workbench/navigation.js';
+installNavigation('knowledge');
 import { installQuestionOrder } from './question-order.js';
 import { createReview } from './review.js';
 /**
@@ -57,6 +60,26 @@ const app = {
   loading: true,
 };
 
+// 阅读偏好独立于知识库数据；折叠不重绘编辑器，也不改变当前选择。
+const sidebarKey = 'knowledgeSidebarCollapsed';
+let sidebarCollapsed = {};
+try {
+  const saved = JSON.parse(localStorage.getItem(sidebarKey) || '{}');
+  sidebarCollapsed = { projects: saved?.projects === true, technical: saved?.technical === true };
+} catch { /* 存储不可用时仍可在当前页面折叠。 */ }
+function updateSidebar() {
+  const collapsed = sidebarCollapsed[app.view] === true;
+  for (const view of ['projects', 'technical']) {
+    $(`view-${view}`).classList.toggle('sidebar-collapsed', sidebarCollapsed[view] === true);
+  }
+  const button = $('btn-sidebar');
+  button.hidden = app.view === 'technical' && app.technicalView === 'review';
+  button.setAttribute('aria-expanded', String(!collapsed));
+  button.setAttribute('aria-controls', app.view === 'projects' ? 'project-sidebar' : 'category-sidebar question-sidebar');
+  button.setAttribute('aria-label', collapsed ? '展开左侧栏' : '收起左侧栏');
+  button.title = collapsed ? '展开左侧栏' : '收起左侧栏';
+}
+
 /* ------------------------------------------------------------------ */
 /* 写入                                                                */
 /* ------------------------------------------------------------------ */
@@ -65,21 +88,32 @@ const app = {
  * 唯一的写入入口。成功时用返回的容器整体替换本地状态；
  * 冲突（其他页面已修改）与失败都只提示，不丢失当前输入。
  */
+let localWriteDepth = 0, pendingLibraryRevision = 0;
 async function apply(op, payload, { onOk } = {}) {
-  const res = await send({ type: 'KNOWLEDGE_APPLY', op, payload });
-  if (!res.ok) {
-    if (res.code === 'conflict') {
-      showBanner('warn', `${esc(res.error)} 你正在编辑的内容已保留，请重新核对后再保存。`);
-    } else {
-      toast(`保存失败：${res.error || '未知错误'}`, { type: 'err', ms: 6000 });
-      showBanner('err', `保存失败：${esc(res.error || '未知错误')}。输入没有丢失，可以直接重试。`);
+  localWriteDepth++;
+  try {
+    const res = await send({ type: 'KNOWLEDGE_APPLY', op, payload });
+    if (!res.ok) {
+      if (res.code === 'conflict') {
+        showBanner('warn', `${esc(res.error)} 你正在编辑的内容已保留，请重新核对后再保存。`);
+      } else {
+        toast(`保存失败：${res.error || '未知错误'}`, { type: 'err', ms: 6000 });
+        showBanner('err', `保存失败：${esc(res.error || '未知错误')}。输入没有丢失，可以直接重试。`);
+      }
+      return res;
     }
+    if (res.state.revision >= app.state.revision) app.state = res.state;
+    onOk?.(res);
+    render();
     return res;
+  } finally {
+    localWriteDepth--;
+    if (!localWriteDepth) {
+      const shouldReload = pendingLibraryRevision > app.state.revision;
+      pendingLibraryRevision = 0;
+      if (shouldReload) void reload({ silent: true });
+    }
   }
-  app.state = res.state;
-  onOk?.(res);
-  render();
-  return res;
 }
 
 async function reload({ silent = false } = {}) {
@@ -246,7 +280,12 @@ function wireEditor(pane) {
   bindMarkdownField(pane, 'ed-answer');
   qsa(pane, '[data-f], #ed-answer').forEach((node) =>
     node.addEventListener('input', () => {
-      if (app.editor) app.editor.dirty = true;
+      if (app.editor) {
+        app.editor.dirty = true;
+        document.documentElement.dataset.workbenchDirty = 'true';
+        if (node.id === 'ed-answer') app.editor.draft.answerMarkdown = node.value;
+        else if (node.dataset.f) app.editor.draft[node.dataset.f] = node.dataset.f === 'tags' ? parseTags(node.value) : node.value;
+      }
     }),
   );
 }
@@ -763,7 +802,50 @@ function updateFloating() {
   if(b.hidden!==hidden)b.hidden=hidden;
   b.disabled=app.view==='projects' && !app.selectedProjectId; b.title=b.disabled?'先选择或新建项目':'新建问答';
 }
+// Keep position only within the same detail. Explicit library/item navigation starts fresh.
+let renderedPositionContext = null, positionRenderVersion = 0;
+function preserveRenderPosition() {
+  const library = app.view === 'projects' ? 'projects' : app.technicalView === 'review' ? 'review' : 'technical';
+  const detail = library === 'projects' ? `${app.selectedProjectId}:${Boolean(app.newProject)}` : app.selectedTechnicalId;
+  const previous = renderedPositionContext;
+  renderedPositionContext = { library, detail };
+  const version = ++positionRenderVersion;
+  if (!previous || previous.library !== library || library === 'review') return () => {};
+  const sameDetail = previous.detail === detail;
+  const selectors = library === 'projects' ? ['#proj-list'] : ['#cat-list', '#tq-list'];
+  if (sameDetail) selectors.push(library === 'projects' ? '#proj-detail .pane-body' : '#tq-detail .pane-body');
+  const points = selectors.map(selector => {
+    const node = document.querySelector(selector);
+    return node ? { selector, top: node.scrollTop, left: node.scrollLeft } : null;
+  }).filter(Boolean);
+  const page = { x: scrollX, y: scrollY };
+  const active = document.activeElement;
+  const editing = sameDetail && active?.id && /^(INPUT|TEXTAREA)$/.test(active.tagName)
+    ? { id: active.id, value: active.value, start: active.selectionStart, end: active.selectionEnd, top: active.scrollTop, left: active.scrollLeft } : null;
+  return () => {
+    const restore = () => {
+      if (version !== positionRenderVersion) return;
+      for (const point of points) {
+        const node = document.querySelector(point.selector);
+        if (node) { node.scrollTop = point.top; node.scrollLeft = point.left; }
+      }
+      if (sameDetail) window.scrollTo(page.x, page.y);
+    };
+    if (editing) {
+      const node = document.getElementById(editing.id);
+      if (node && node.value === editing.value) {
+        node.focus({ preventScroll: true });
+        if (typeof editing.start === 'number') node.setSelectionRange(editing.start, editing.end);
+        node.scrollTop = editing.top; node.scrollLeft = editing.left;
+      }
+    }
+    restore();
+    requestAnimationFrame(restore);
+  };
+}
 function render() {
+  document.documentElement.dataset.workbenchDirty = String(Boolean(app.editor?.dirty));
+  const restorePosition = preserveRenderPosition();
   $('pill-projects').textContent = String(app.state.projects.length);
   $('pill-technical').textContent = String(app.state.technicalQuestions.length);
   $('brand-sub').textContent = app.loading
@@ -775,17 +857,25 @@ function render() {
   const reviewing = app.view === 'technical' && app.technicalView === 'review';
   $('view-review').hidden = !reviewing;
   $('view-technical').hidden = app.view !== 'technical' || reviewing;
+  updateSidebar();
   $('bank-browse').classList.toggle('btn-primary', !reviewing);
   $('bank-review').classList.toggle('btn-primary', reviewing);
   if (app.view === 'projects') renderProjects();
   else if (reviewing) reviewView.render();
   else renderTechnical();
   updateFloating();
+  restorePosition();
 }
 
 /* ------------------------------------------------------------------ */
 /* 事件绑定                                                            */
 /* ------------------------------------------------------------------ */
+
+$('btn-sidebar').addEventListener('click', () => {
+  sidebarCollapsed[app.view] = !sidebarCollapsed[app.view];
+  try { localStorage.setItem(sidebarKey, JSON.stringify(sidebarCollapsed)); } catch { /* 当前页面仍生效。 */ }
+  updateSidebar();
+});
 
 qsa($('tabs'), 'button').forEach((b) =>
   b.addEventListener('click', () => {
@@ -848,8 +938,8 @@ document.addEventListener('click',(e)=>{
  if(toggle){const id=toggle.dataset.toggleAnswer;app.expanded.has(id)?app.expanded.delete(id):app.expanded.add(id);const answer=document.getElementById(`answer-${id}`);answer.hidden=!app.expanded.has(id);toggle.setAttribute('aria-expanded',String(app.expanded.has(id)));toggle.querySelector('span').textContent=app.expanded.has(id)?'收起答案 −':'展开答案 ＋';}
  const bulk=e.target.closest('[data-bulk]');if(bulk){const list=app.view==='projects'?projectQuestions(app.selectedProjectId).filter(q=>matches(app.pqSearch,q.question,q.answerMarkdown)):filteredTechnical();for(const q of list)bulk.dataset.bulk==='expand'?app.expanded.add(q.id):app.expanded.delete(q.id);render();}
 });
-$('btn-options').addEventListener('click', openOptions);
-$('btn-dashboard').addEventListener('click', openDashboard);
+$('btn-options').addEventListener('click', () => navigate('options'));
+$('btn-dashboard').addEventListener('click', () => navigate('dashboard'));
 $('btn-add-image').addEventListener('click', () => $('file-image').click());
 $('btn-add-file').addEventListener('click', () => $('file-doc').click());
 $('btn-backup').addEventListener('click', () => {
@@ -903,7 +993,7 @@ document.addEventListener('paste', async (e) => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  if (!app.editor?.dirty) return;
+  if (!app.editor?.dirty || window.parent.__JDT_MODE_TRANSFERRING__) return;
   e.preventDefault();
   e.returnValue = '';
 });
@@ -918,6 +1008,10 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   const incomingRevision = Math.floor(Number(incoming?.revision)) || 0;
   // 自己写入触发的回声：状态已经是新的了，不用重绘
   if (incomingRevision <= (Math.floor(Number(app.state.revision)) || 0)) return;
+  if (localWriteDepth) {
+    pendingLibraryRevision = Math.max(pendingLibraryRevision, incomingRevision);
+    return;
+  }
   const wasEditing = Boolean(app.editor);
   await reload({ silent: true });
   if (wasEditing) {
@@ -948,3 +1042,21 @@ async function takeHandoff() {
 await reload();
 await takeHandoff();
 setStatus('');
+
+registerViewState(() => {
+  const keys=['view','technicalView','selectedProjectId','selectedTechnicalId','projSearch','pqSearch','tqSearch','tqCategoryId','tqTags','editor','newProject'];
+  const result=Object.fromEntries(keys.map(key=>[key,structuredClone(app[key])]));
+  result.expanded=[...app.expanded];
+  result.review=$('review-panel').hidden?null:$('review-panel').__JDT_REVIEW_SNAPSHOT__?.();
+  if(!$('review-panel').hidden&&!result.review)throw new Error('请先完成当前简历核对，再切换显示模式。');
+  return result;
+}, async saved => {
+  if(!saved)return;
+  const {expanded,review,...rest}=saved;Object.assign(app,rest);app.expanded=new Set(expanded||[]);
+  $('proj-search').value=app.projSearch;$('tq-search').value=app.tqSearch;render();
+  if(review)openReviewPanel({...review,
+    existing:review.library==='project'?projectQuestions(review.projectId):app.state.technicalQuestions,
+    categories:app.state.categories,
+    onCreateCategory:async name=>{const res=await apply('category.create',{name});return res.ok?res.result.category:null;},
+    onCommit:plan=>apply('candidates.commit',plan),onCommitDone:()=>reload({silent:true})});
+});

@@ -54,6 +54,7 @@ export function openReviewPanel(opts) {
   const close = () => {
     host.hidden = true;
     host.innerHTML = '';
+    delete host.__JDT_REVIEW_SNAPSHOT__;
   };
 
   function categoryOptions(selected) {
@@ -352,6 +353,7 @@ export function openReviewPanel(opts) {
     opts.onCommitDone?.(res, counts);
   }
 
+  host.__JDT_REVIEW_SNAPSHOT__=()=>({title:opts.title,intro:opts.intro,library:opts.library,projectId:opts.projectId,candidates:collect()});
   render();
   return { close, getCandidates: () => collect() };
 }

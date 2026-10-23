@@ -2,7 +2,7 @@
  * 记录存储层：chrome.storage.local 里的 records 数组 + 派生统计。
  * 记录模型（一条 = 一次岗位记录）：
  * {
- *   id, createdAt, appliedAt, company, title, location, salary, jobType,
+ *   id, createdAt, appliedAt, company, companyType, title, location, salary, jobType,
  *   education, experience, deadline, jd, requirements, skills[], contact,
  *   summary, status, statusHistory[{status,at,note}], nextAction, notes,
  *   sourceUrl, sourceSite, pageTitle, screenshot, aiRaw, aiMeta{model,ms,usage}
@@ -24,6 +24,7 @@ import {
   uniq,
 } from './util.js';
 import { DEFAULT_STATUSES, RECORDS_KEY, getSettings, statusDef } from './settings.js';
+import { normalizeCompanyType } from './company-type.js';
 
 export async function listRecords() {
   const { [RECORDS_KEY]: records } = await chrome.storage.local.get(RECORDS_KEY);
@@ -57,6 +58,7 @@ export async function buildRecord(input, { settings } = {}) {
     updatedAt: now,
     appliedAt: toTs(input.appliedAt) ?? now,
     company: (input.company || '').trim(),
+    companyType: normalizeCompanyType(input.companyType),
     title: (input.title || '').trim(),
     location: (input.location || '').trim(),
     salary: (input.salary || '').trim(),
@@ -100,6 +102,7 @@ export async function updateRecord(id, patch) {
   if (idx === -1) return null;
   const prev = records[idx];
   const next = { ...prev, ...patch, updatedAt: Date.now() };
+  if (patch.companyType !== undefined) next.companyType = normalizeCompanyType(patch.companyType);
   if (patch.appliedAt !== undefined) next.appliedAt = toTs(patch.appliedAt);
   if (patch.status && patch.status !== prev.status) {
     next.statusHistory = [
@@ -272,6 +275,7 @@ export function toCsv(records) {
     ['记录时间', (r) => fmtDateTime(r.createdAt)],
     ['投递时间', (r) => (r.appliedAt ? fmtDate(r.appliedAt) : '')],
     ['公司', (r) => r.company],
+    ['企业性质', (r) => r.companyType || '未标注'],
     ['岗位', (r) => r.title],
     ['状态', (r) => r.status],
     ['地点', (r) => r.location],
@@ -307,12 +311,12 @@ export function toMarkdown(records, settings) {
   const stats = computeStats(records, settings);
   lines.push(`共 ${stats.total} 条记录；本周新增 ${stats.week} 条；面试/Offer ${stats.interviewCount + stats.offerCount} 条。`);
   lines.push('');
-  lines.push('| 公司 | 岗位 | 状态 | 投递时间 | 记录时间 | 地点 | 薪资 | 下一步 | 备注 |');
-  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+  lines.push('| 公司 | 企业性质 | 岗位 | 状态 | 投递时间 | 记录时间 | 地点 | 薪资 | 下一步 | 备注 |');
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   for (const r of records) {
     lines.push(
-      `| ${cell(r.company) || '—'} | ${cell(r.title)} | ${cell(r.status)} | ${r.appliedAt ? fmtDate(r.appliedAt) : '—'} | ${fmtDate(r.createdAt)} | ${cell(r.location)} | ${cell(r.salary)} | ${cell(r.nextAction)} | ${cell(r.notes)} |`,
+      `| ${cell(r.company) || '—'} | ${cell(r.companyType) || '未标注'} | ${cell(r.title)} | ${cell(r.status)} | ${r.appliedAt ? fmtDate(r.appliedAt) : '—'} | ${fmtDate(r.createdAt)} | ${cell(r.location)} | ${cell(r.salary)} | ${cell(r.nextAction)} | ${cell(r.notes)} |`,
     );
   }
   lines.push('');
@@ -327,7 +331,7 @@ export function toMarkdown(records, settings) {
   lines.push('## 岗位详情');
   for (const r of records) {
     lines.push('');
-    lines.push(`### ${r.company || '未知公司'} · ${r.title || '未知岗位'}（${r.status}）`);
+    lines.push(`### ${r.company || '未知公司'} · ${r.title || '未知岗位'}（${r.status}${r.companyType ? ` · ${r.companyType}` : ''}）`);
     if (r.sourceUrl) lines.push(`- 来源：${r.sourceSite || ''} ${r.sourceUrl}`);
     if (r.skills?.length) lines.push(`- 关键词：${r.skills.join('、')}`);
     if (r.contact) lines.push(`- 投递方式：${r.contact}`);
@@ -361,7 +365,11 @@ export function mergeImport(existing, incoming) {
     const key = normalizeKey(rec.company, rec.title);
     if (rec.id && byId.has(rec.id)) {
       const i = out.findIndex((r) => r.id === rec.id);
-      out[i] = { ...out[i], ...rec };
+      out[i] = {
+        ...out[i],
+        ...rec,
+        companyType: normalizeCompanyType(rec.companyType ?? out[i].companyType),
+      };
       updated += 1;
       continue;
     }
@@ -369,7 +377,7 @@ export function mergeImport(existing, incoming) {
       skipped += 1;
       continue;
     }
-    const withId = { ...rec, id: rec.id || uid('job') };
+    const withId = { ...rec, companyType: normalizeCompanyType(rec.companyType), id: rec.id || uid('job') };
     out.push(withId);
     byId.set(withId.id, withId);
     if (key) byKey.set(key, withId);

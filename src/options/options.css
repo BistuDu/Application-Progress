@@ -92,3 +92,6 @@ kbd { background: #f1f5f9; border: 1px solid var(--line); border-bottom-width: 2
 .toast { background: #0f172a; color: #f8fafc; border-radius: 11px; padding: 9px 15px; font-size: 13px; box-shadow: 0 14px 36px rgba(0,0,0,.24); }
 .toast.ok { background: #065f46; }
 .toast.err { background: #991b1b; }
+
+.in-sidepanel #open-dashboard{display:none}
+@media(max-width:600px){.head{padding:12px}.head h1{font-size:15px}main{padding:0 10px;margin:12px auto}.card{padding:14px 12px}.grid{grid-template-columns:minmax(0,1fr)}.foot{padding:10px;gap:6px;flex-wrap:wrap}.foot #save-hint{flex-basis:100%;order:2}.row{flex-wrap:wrap}.row input{min-width:0;flex:1}}

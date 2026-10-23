@@ -134,11 +134,13 @@ $('btn-knowledge').addEventListener('click', async () => {
   await send({ type: 'OPEN_KNOWLEDGE' });
   window.close();
 });
-$('btn-options').addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+$('btn-options').addEventListener('click', async () => {
+  await send({ type: 'OPEN_OPTIONS' });
+  window.close();
 });
-$('btn-goto-options').addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+$('btn-goto-options').addEventListener('click', async () => {
+  await send({ type: 'OPEN_OPTIONS' });
+  window.close();
 });
 
 render();

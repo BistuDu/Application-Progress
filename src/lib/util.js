@@ -193,6 +193,15 @@ export function truncate(s, n = 120) {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
+/** 多地点单行摘要：青岛、济南… -> { short: '青岛 等 6 地', full: 原文 }。 */
+export function locationSummary(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return { short: '—', full: '' };
+  const parts = text.split(/[、,，;；/\n]+/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return { short: text, full: text };
+  return { short: `${parts[0]} 等 ${parts.length} 地`, full: text };
+}
+
 export function bytesToSize(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];

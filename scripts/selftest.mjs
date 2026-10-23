@@ -39,15 +39,16 @@ globalThis.chrome = {
   },
 };
 
-const { DEFAULT_SETTINGS, getSettings } = await import(path.join(ROOT, 'src/lib/settings.js'));
+const { DASHBOARD_COLUMN_IDS, DEFAULT_SETTINGS, getSettings, normalizeDashboardColumnWidths, normalizeDashboardColumns } = await import(path.join(ROOT, 'src/lib/settings.js'));
 const { chatUrlCandidates, originPattern, statusColor } = await import(path.join(ROOT, 'src/lib/settings.js'));
+const { normalizeCompanyType, suggestCompanyType } = await import(path.join(ROOT, 'src/lib/company-type.js'));
 const { analyzeScreenshot, extractJson, isEffectivelyEmpty, normalizeResult, testConnection } = await import(
   path.join(ROOT, 'src/lib/vision.js'),
 );
 const { addRecord, computeStats, findDuplicates, listRecords, mergeImport, toCsv, toMarkdown, toExportJson, updateRecord } = await import(
   path.join(ROOT, 'src/lib/store.js')
 );
-const { fmtDate, siteFromUrl, extractSkills } = await import(path.join(ROOT, 'src/lib/util.js'));
+const { fmtDate, siteFromUrl, extractSkills, locationSummary } = await import(path.join(ROOT, 'src/lib/util.js'));
 
 /* ---------------- 参数 ---------------- */
 const args = process.argv.slice(2);
@@ -139,6 +140,55 @@ check('别名字段 city 生效', norm.location === '杭州');
 check('技能自动补充词典命中', norm.skills.includes('MySQL'));
 check('来源站点自动推导', norm.sourceSite === 'BOSS直聘');
 check('技能词典提取', extractSkills('熟悉 Java、Redis 和 Kafka').length >= 3);
+const explicitTypeNorm = normalizeResult({ is_job: true, company: '中国石化', company_type: '国有企业' });
+check('识别结果映射明确企业性质', explicitTypeNorm.companyType === '国企', explicitTypeNorm.companyType);
+const invalidTypeNorm = normalizeResult({ is_job: true, company: '某公司', company_type: '神秘类型' });
+check('非法企业性质留空', invalidTypeNorm.companyType === '');
+
+console.log('\n[3b] 企业性质与动态列');
+check('别名归一化：中央企业 → 央企', normalizeCompanyType('中央企业') === '央企');
+check('别名归一化：民营企业 → 私企', normalizeCompanyType('民营企业') === '私企');
+check('别名归一化：外资企业 → 其他', normalizeCompanyType('外资企业') === '其他');
+check('词典：中国石化 → 央企', suggestCompanyType({ company: '中国石化' }).value === '央企');
+check('词典：作业帮 → 私企', suggestCompanyType({ company: '作业帮' }).value === '私企');
+check('地方国资关键词 → 国企', suggestCompanyType({ company: '青岛市城投集团有限公司' }).value === '国企');
+check('未匹配保持未标注', suggestCompanyType({ company: '西藏德众北京分公司' }).value === '');
+check('截图明确类型优先于词典', suggestCompanyType({ company: '作业帮', explicitType: '国有企业' }).value === '国企');
+const columnConfig = normalizeDashboardColumns({ order: ['status', 'bogus', 'status'], hidden: ['salary', 'bogus'] });
+check('列配置过滤未知并去重', columnConfig.order.length === DASHBOARD_COLUMN_IDS.length && columnConfig.order[0] === 'status');
+check('列配置补齐完整列目录', columnConfig.order.includes('createdAt') && columnConfig.order.includes('nextAction') && columnConfig.order.includes('aiModel'));
+check('列配置保留有效 hidden 并默认隐藏扩展列', columnConfig.hidden.includes('salary') && columnConfig.hidden.includes('companyType') && !columnConfig.hidden.includes('status'));
+const oldColumnConfig = normalizeDashboardColumns({ order: ['createdAt', 'location', 'salary', 'status', 'appliedAt', 'source', 'nextAction'], hidden: [] });
+check('老配置自动隐藏新增列', oldColumnConfig.hidden.includes('companyType') && !oldColumnConfig.hidden.includes('status'));
+const columnWidths = normalizeDashboardColumnWidths({ salary: 10, location: 999, company: 100 });
+check('列宽限制在可读范围', columnWidths.salary === 70 && columnWidths.location === 600 && columnWidths.company === 160);
+const fallbackWidths = normalizeDashboardColumnWidths({});
+check('列宽缺失回退默认值', fallbackWidths.createdAt === 108 && fallbackWidths.status === 118 && fallbackWidths.company === undefined);
+const locSummary = locationSummary('山东青岛、山东东营、河南濮阳、湖北武汉、四川成都、河南郑州、江苏扬州');
+check('多地点生成单行摘要', locSummary.short === '山东青岛 等 7 地' && locSummary.full.includes('江苏扬州'));
+const typeRecord = {
+  id: 'type-test',
+  company: '中国石化',
+  companyType: '央企',
+  title: '算法工程师',
+  status: '已投递',
+  createdAt: Date.now(),
+  appliedAt: Date.now(),
+  location: '北京',
+  salary: '',
+  nextAction: '',
+  notes: '',
+  sourceSite: 'BOSS直聘',
+  statusHistory: [],
+};
+const typeCsv = toCsv([typeRecord]);
+check('CSV 含企业性质列', typeCsv.includes('企业性质') && typeCsv.includes('央企'));
+const typeMd = toMarkdown([typeRecord], { ...settings, statuses: DEFAULT_SETTINGS.statuses });
+check('Markdown 含企业性质列和详情', typeMd.includes('企业性质') && typeMd.includes('· 央企'));
+const typeJson = JSON.parse(toExportJson([typeRecord], settings));
+check('JSON 备份保留企业性质', typeJson.records?.[0]?.companyType === '央企');
+const oldImported = mergeImport([], [{ id: 'old-record', company: '旧记录', title: '开发' }]).records[0];
+check('旧 JSON 缺企业性质按空处理', oldImported.companyType === '');
 
 /* ---------------- 空返回重试（打桩 fetch，不联网） ---------------- */
 console.log('\n[4] 空返回自动重试');

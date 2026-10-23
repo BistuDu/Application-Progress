@@ -108,7 +108,7 @@ const pageServer = http.createServer(async (req, res) => {
   if (mock && req.method === 'POST') {
     for await (const _ of req) { /* consume body */ }
     if (/invalid-key/.test(req.headers.authorization || '')) { res.writeHead(401); res.end('{"error":{"message":"无效的 API Key"}}'); return; }
-    const result = { is_job: true, company: '测试公司', title: '测试开发工程师（实习）', location: '上海', salary: '200–300 元/天', jd: '设计测试系统，开发接口自动化，负责 MySQL 数据库测试和性能分析。', requirements: '熟悉 Java、SQL、Linux，掌握计算机网络和数据库基础，具有自动化测试经验。', skills: ['Java', 'MySQL', 'Linux'], summary: '实习测试开发岗位' };
+    const result = { is_job: true, company: '测试公司', company_type: '民营企业', title: '测试开发工程师（实习）', location: '上海', salary: '200–300 元/天', jd: '设计测试系统，开发接口自动化，负责 MySQL 数据库测试和性能分析。', requirements: '熟悉 Java、SQL、Linux，掌握计算机网络和数据库基础，具有自动化测试经验。', skills: ['Java', 'MySQL', 'Linux'], summary: '实习测试开发岗位' };
     setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] })); }, 900);
     return;
   }
@@ -377,21 +377,25 @@ try {
   check('松手后进入识别中状态', processing === true);
   await shot(job, '2-processing.jpg');
 
+  const sideTarget = await waitFor(async () => (await httpJson(`http://127.0.0.1:${PORT}/json/list`)).find(t=>t.url.includes('/workbench/workbench.html')&&!t.url.includes('?view=options')));
+  const reviewPanel=await CDP.connect(sideTarget.webSocketDebuggerUrl);
+  const review={eval:(expr,opts)=>reviewPanel.eval(`(()=>{const document=[...window.document.querySelectorAll('iframe')].find(f=>f.title==='识别核对')?.contentDocument;return (${expr});})()`,opts)};
   /* 8. 等识别结果 → 审阅面板 */
   console.log('  等待模型返回（deepseek-flash）…');
   const t0 = Date.now();
   await waitFor(
-    () => job.eval(`!!document.getElementById("jdt-overlay-host").shadowRoot.querySelector(".panel")`),
+    () => review.eval(`!!document.getElementById("jdt-overlay-host").shadowRoot.querySelector(".panel")`),
     { timeoutMs: 120000, intervalMs: 500, label: '审阅面板出现' },
   );
   console.log(`  · 识别耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   const fields = JSON.parse(
-    await job.eval(`(() => {
+    await review.eval(`(() => {
       const r = document.getElementById("jdt-overlay-host").shadowRoot;
       const v = (id) => (r.querySelector(id)||{}).value || "";
       return JSON.stringify({
-        company: v("#f-company"), title: v("#f-title"), location: v("#f-location"),
+        company: v("#f-company"), companyType: v("#f-company-type"), typeHint: (r.querySelector("#f-company-type-hint")||{}).textContent || "",
+        title: v("#f-title"), location: v("#f-location"),
         salary: v("#f-salary"), status: v("#f-status"), jd: v("#f-jd"),
         req: v("#f-req"), skills: [...r.querySelectorAll(".chip-skill")].map(n=>n.textContent.replace("×","").trim()),
         hasPreview: !!r.querySelector("#jdt-preview"),
@@ -403,7 +407,7 @@ try {
   );
 
   // 把实际送给模型的裁剪图存下来，便于人工核对
-  const cropSrc = await job.eval(
+  const cropSrc = await review.eval(
     `(document.getElementById("jdt-overlay-host").shadowRoot.querySelector("#jdt-preview")||{}).src || ""`,
   );
   if (cropSrc.startsWith('data:')) {
@@ -445,10 +449,12 @@ try {
   check('截图预览可见', fields.hasPreview === true);
   check('状态下拉含 7 个默认状态', fields.statusOptions.length === 7, fields.statusOptions.join('、'));
   check('默认状态为已投递', fields.status === '已投递', fields.status);
-  await shot(job, '3-review.jpg');
+  check('审阅面板带出企业性质', fields.companyType === '私企', fields.companyType);
+  check('企业性质标注来自截图', fields.typeHint.includes('截图'), fields.typeHint);
+  await shot(reviewPanel, '3-review.jpg');
 
   /* 9. 手动改状态 + 保存 */
-  await job.eval(`(() => {
+  await review.eval(`(() => {
     const r = document.getElementById("jdt-overlay-host").shadowRoot;
     const s = r.querySelector("#f-status");
     s.value = "一面";
@@ -456,12 +462,12 @@ try {
     r.querySelector("#f-next").value = "9/20 前完成在线测评";
     return true;
   })()`);
-  const colorAfter = await job.eval(
+  const colorAfter = await review.eval(
     `document.getElementById("jdt-overlay-host").shadowRoot.querySelector("#f-status").style.color`,
   );
   check('切换状态会更新颜色', colorAfter === 'rgb(6, 182, 212)', colorAfter);
 
-  await job.eval(`document.getElementById("jdt-overlay-host").shadowRoot.querySelector("#jdt-save").click()`, {
+  await review.eval(`document.getElementById("jdt-overlay-host").shadowRoot.querySelector("#jdt-save").click()`, {
     userGesture: true,
   });
   await sleep(1500);
@@ -471,6 +477,7 @@ try {
   const rec = saved[0] || {};
   check('记录含创建时间', typeof rec.createdAt === 'number' && rec.createdAt > 0);
   check('记录含投递日期', typeof rec.appliedAt === 'number');
+  check('记录保存了企业性质', rec.companyType === '私企', rec.companyType);
   check('记录含 JD 正文', (rec.jd || '').length > 20, `${(rec.jd || '').length} 字`);
   check('记录保存了手动选择的状态', rec.status === '一面', rec.status);
   check('记录保存了下一步', rec.nextAction === '9/20 前完成在线测评', rec.nextAction);
@@ -479,7 +486,7 @@ try {
   check('状态时间线含两次变化', (rec.statusHistory || []).length === 1 || (rec.statusHistory || []).length === 2, JSON.stringify(rec.statusHistory?.map((h) => h.status)));
 
   const toastGone = await waitFor(
-    () => job.eval(`!document.getElementById("jdt-overlay-host")`),
+    () => review.eval(`!document.getElementById("jdt-overlay-host")`),
     { timeoutMs: 9000, intervalMs: 400, label: '面板自动关闭' },
   );
   check('保存后面板自动关闭', toastGone === true);
@@ -492,14 +499,101 @@ try {
       rows: document.querySelectorAll("#tbody tr[data-id]").length,
       rowText: (document.querySelector("#tbody tr[data-id]")||{}).innerText || "",
       funnel: document.getElementById("funnel").innerText.replace(/\\n/g," "),
-      count: document.getElementById("count").textContent
+      count: document.getElementById("count").textContent,
+      overviewHidden: document.getElementById("overview-body").hidden,
+      summaryMetrics: document.querySelectorAll("#overview-metrics .metric").length,
+      pageFits: document.documentElement.scrollHeight <= document.documentElement.clientHeight + 1,
+      hasTypeBadge: (document.querySelector("#tbody tr[data-id] .type-badge")||{}).textContent || ""
     }))()`),
   );
   console.log(`  · 看板卡片：${dashState.cards.join(' | ')}`);
   check('看板统计到 1 条记录', dashState.rows === 1, dashState.count);
   check('看板表格显示该岗位', dashState.rowText.includes('测试开发'), dashState.rowText.split('\n')[0]);
+  check('看板显示企业性质标签', dashState.hasTypeBadge.trim() === '私企', dashState.hasTypeBadge);
   check('漏斗统计到一面阶段', dashState.funnel.includes('一面'), dashState.funnel.slice(0, 60));
+  check('默认折叠数据概览', dashState.overviewHidden === true);
+  check('摘要显示六项关键指标', dashState.summaryMetrics === 6, `${dashState.summaryMetrics} 项`);
+  check('默认折叠时页面无需纵向滚动', dashState.pageFits === true);
   await shot(dash, '4-dashboard.jpg');
+
+  await dash.eval(`document.getElementById("overview-toggle").click()`);
+  await sleep(400);
+  check('数据概览可展开', (await dash.eval('document.getElementById("overview-body").hidden')) === false);
+  await dash.eval(`document.getElementById("overview-toggle").click()`);
+  await sleep(300);
+
+  /* 11b. 企业性质筛选 */
+  await dash.eval(`(() => { const s=document.getElementById("f-company-type"); s.value="私企"; s.dispatchEvent(new Event("change",{bubbles:true})); })()`);
+  await sleep(200);
+  check('企业性质筛选命中', (await dash.eval('document.querySelectorAll("#tbody tr[data-id]").length')) === 1);
+  await dash.eval(`(() => { const s=document.getElementById("f-company-type"); s.value="__unset__"; s.dispatchEvent(new Event("change",{bubbles:true})); })()`);
+  await sleep(200);
+  check('未标注筛选不命中已标注记录', (await dash.eval('document.querySelectorAll("#tbody tr[data-id]").length')) === 0);
+  await dash.eval(`(() => { const s=document.getElementById("f-company-type"); s.value=""; s.dispatchEvent(new Event("change",{bubbles:true})); })()`);
+  await sleep(200);
+  await dash.eval(`(() => { const q=document.getElementById("q"); q.value="私企"; q.dispatchEvent(new Event("input",{bubbles:true})); })()`);
+  await sleep(200);
+  check('搜索可命中企业性质', (await dash.eval('document.querySelectorAll("#tbody tr[data-id]").length')) === 1);
+  await dash.eval(`(() => { const q=document.getElementById("q"); q.value=""; q.dispatchEvent(new Event("input",{bubbles:true})); })()`);
+  await sleep(200);
+
+  /* 11c. 列设置与持久化 */
+  await dash.eval(`document.getElementById("btn-columns").click()`);
+  await sleep(200);
+  check('列设置浮层可打开', (await dash.eval('!document.getElementById("column-pop").hidden')) === true);
+  await dash.eval(`(() => { const cb=document.querySelector('[data-col-toggle="salary"]'); cb.checked=false; cb.dispatchEvent(new Event("change",{bubbles:true})); })()`);
+  await waitFor(() => dash.eval('chrome.storage.local.get("settings").then(o=>o.settings?.dashboardColumns?.hidden?.includes("salary")===true)'), { label: '隐藏列写入设置' });
+  check('隐藏列立即生效', (await dash.eval(`![...document.querySelectorAll("#thead th")].some(th=>th.textContent.includes("薪资"))`)) === true);
+  await dash.eval(`document.getElementById("cp-reset").click()`);
+  await waitFor(() => dash.eval('chrome.storage.local.get("settings").then(o=>o.settings?.dashboardColumns?.hidden?.includes("salary")===false)'), { label: '恢复默认列写入设置' });
+  check('恢复默认列', (await dash.eval(`[...document.querySelectorAll("#thead th")].some(th=>th.textContent.includes("薪资"))`)) === true);
+  check('默认隐藏扩展列', (await dash.eval(`chrome.storage.local.get("settings").then(o=>o.settings?.dashboardColumns?.hidden?.includes("companyType")===true)`)) === true);
+  await dash.eval(`(() => { const s=document.getElementById("cp-search"); s.value="学历"; s.dispatchEvent(new Event("input",{bubbles:true})); })()`);
+  await sleep(200);
+  check('列设置可按名称搜索', (await dash.eval('document.querySelectorAll("#cp-list .cp-item").length')) === 1 && (await dash.eval('document.getElementById("cp-list").textContent.includes("学历要求")')));
+  await dash.eval(`(() => { const s=document.getElementById("cp-search"); s.value=""; s.dispatchEvent(new Event("input",{bubbles:true})); })()`);
+  await sleep(200);
+  await dash.eval(`document.getElementById("cp-show-all").click()`);
+  await sleep(300);
+  check('全部显示展示完整列目录', (await dash.eval('document.querySelectorAll("#thead th").length')) === 25);
+  await dash.eval(`document.getElementById("cp-reset").click()`);
+  await sleep(300);
+  check('恢复默认回到七列', (await dash.eval('document.querySelectorAll("#thead th").length')) === 10);
+  await dash.eval(`document.getElementById("cp-close").click()`);
+  await sleep(200);
+  await dash.eval(`document.getElementById("btn-columns-bar").click()`);
+  await sleep(200);
+  check('筛选栏列设置入口可打开', (await dash.eval('!document.getElementById("column-pop").hidden')) === true);
+  await dash.eval(`document.getElementById("cp-close").click()`);
+  await sleep(200);
+  const beforeSalary = await dash.eval(`document.querySelector('#thead th[data-col-id="salary"]').getBoundingClientRect().width`);
+  await dash.eval(`(() => {
+    const handle=document.querySelector('#thead th[data-col-id="salary"] .col-resizer');
+    const r=handle.getBoundingClientRect(), startX=r.x+r.width/2, y=r.y+r.height/2;
+    handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,clientX:startX,clientY:y,pointerId:1,pointerType:'mouse',buttons:1}));
+    window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:startX+40,clientY:y,pointerId:1,pointerType:'mouse',buttons:1}));
+    window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:startX+40,clientY:y,pointerId:1,pointerType:'mouse',buttons:0}));
+    return true;
+  })()`);
+  await sleep(500);
+  const afterSalary = await dash.eval(`document.querySelector('#thead th[data-col-id="salary"]').getBoundingClientRect().width`);
+  check('拖动表头可调整列宽', afterSalary >= beforeSalary + 30, `${beforeSalary} → ${afterSalary}`);
+  const savedSalaryWidth = Number(await dash.eval('chrome.storage.local.get("settings").then(o=>o.settings?.dashboardColumnWidths?.salary)'));
+  check('列宽写入设置', Math.abs(savedSalaryWidth - afterSalary) <= 2, `${savedSalaryWidth}px`);
+  await dash.eval('location.reload()');
+  await waitFor(() => dash.eval(`!!document.getElementById("btn-add")`), { label: '看板重载' });
+  await sleep(400);
+  check('看板重载后列配置仍生效', (await dash.eval(`[...document.querySelectorAll("#thead th")].some(th=>th.textContent.includes("薪资"))`)) === true);
+  check('看板重载后列宽保持', (await dash.eval(`document.querySelector('#thead th[data-col-id="salary"]').getBoundingClientRect().width`)) >= beforeSalary + 30);
+  await waitFor(() => dash.eval('!!document.querySelector("#tbody tr[data-id]")'), { label: '看板记录重载' });
+  const rowHeight = await dash.eval('document.querySelector("#tbody tr[data-id]").getBoundingClientRect().height');
+  check('默认行高在 42–52px', rowHeight >= 42 && rowHeight <= 52, `${rowHeight.toFixed(1)}px`);
+  check('操作图标为内联 SVG', (await dash.eval('!!document.querySelector("#tbody [data-act=open] svg")')) === true);
+  await dash.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 800, deviceScaleFactor: 1, mobile: false });
+  await sleep(300);
+  check('360px 宽看板无横向溢出', (await dash.eval('document.documentElement.scrollWidth<=document.documentElement.clientWidth+1')) === true);
+  await dash.send('Emulation.clearDeviceMetricsOverride');
+  await sleep(200);
 
   /* 11. 看板里改状态 */
   await dash.eval(`(() => {
@@ -515,6 +609,16 @@ try {
 
   const offerCard = await dash.eval(`[...document.querySelectorAll("#cards .card")].find(c=>c.querySelector(".k").textContent==="Offer")?.querySelector(".v").textContent`);
   check('统计卡片随状态同步更新', offerCard === '1', `Offer=${offerCard}`);
+
+  await dash.eval(`(() => { const i=document.querySelector('#tbody tr[data-id] input[data-act=appliedAt]'); i.value='2026-01-02'; i.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await sleep(900);
+  const afterDate = JSON.parse(await sw.eval('chrome.storage.local.get("records").then(o=>JSON.stringify(o.records||[]))'))[0] || {};
+  const appliedDate = new Date(afterDate.appliedAt);
+  check(
+    '表格内可修改投递日期',
+    appliedDate.getFullYear() === 2026 && appliedDate.getMonth() === 0 && appliedDate.getDate() === 2,
+    appliedDate.toISOString(),
+  );
 
   /* 12. 详情抽屉 */
   await dash.eval(`document.querySelector("#tbody tr[data-id] button[data-act=open]").click()`);
@@ -659,6 +763,7 @@ try {
     document.getElementById("m-company").value = "测试公司B";
     document.getElementById("m-title").value = "算法实习生";
     document.getElementById("m-location").value = "上海";
+    document.getElementById("m-company-type").value = "国企";
     document.getElementById("m-save").click();
     return true;
   })()`);
@@ -666,6 +771,7 @@ try {
   let recs = JSON.parse(await sw.eval('chrome.storage.local.get("records").then(o=>JSON.stringify(o.records||[]))'));
   check('手动添加生成记录', recs.length === 2, `${recs.length} 条`);
   check('手动添加的字段正确', recs.some((r) => r.company === '测试公司B' && r.title === '算法实习生'));
+  check('手动添加保存企业性质', recs.find((r) => r.company === '测试公司B')?.companyType === '国企', recs.find((r) => r.company === '测试公司B')?.companyType);
 
   await dash.eval(`document.getElementById("check-all").click()`);
   await sleep(300);
@@ -703,6 +809,7 @@ try {
   check('导出的 CSV 文件已落盘', fs.existsSync(csvFile), path.basename(csvFile));
   check('CSV 带 BOM', csvText.charCodeAt(0) === 0xfeff);
   check('CSV 含表头与记录', csvText.includes('记录时间') && csvText.includes('测试公司B') && csvText.includes('测评中'));
+  check('CSV 含企业性质列', csvText.includes('企业性质') && csvText.includes('私企') && csvText.includes('国企'));
   check('CSV 行数正确', csvText.trim().split('\n').length === 3, `${csvText.trim().split('\n').length} 行（含表头）`);
 
   await dash.eval(`document.getElementById("btn-export").click()`);
@@ -717,6 +824,7 @@ try {
   );
   const mdText = fs.readFileSync(mdFile, 'utf8');
   check('导出的 Markdown 含漏斗摘要与状态变化', mdText.includes('求职投递进度') && mdText.includes('状态变化明细'));
+  check('Markdown 含企业性质', mdText.includes('企业性质') && mdText.includes('私企') && mdText.includes('国企'));
 
   /* 22. 错误路径：无 Key 时的提示（sendMessage 必须从扩展页面发出，SW 不会收到自己发的消息） */
   await sw.eval('chrome.storage.local.set({settings:{apiBase:"https://api.deepseek.com",apiKey:"",model:"deepseek-flash"}})');

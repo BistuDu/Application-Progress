@@ -27,6 +27,117 @@ export const DEFAULT_STATUSES = [
   { name: 'Offer', color: '#10b981', kind: 'offer', desc: '已收到录用意向' },
 ];
 
+/** 投递表格的可选列；公司/岗位、勾选和操作列固定，不在此列表。 */
+export const DASHBOARD_COLUMN_IDS = [
+  'createdAt',
+  'location',
+  'salary',
+  'status',
+  'appliedAt',
+  'source',
+  'nextAction',
+  'companyType',
+  'jobType',
+  'education',
+  'experience',
+  'headcount',
+  'deadline',
+  'contact',
+  'skills',
+  'summary',
+  'notes',
+  'updatedAt',
+  'statusChanges',
+  'sourceUrl',
+  'pageTitle',
+  'aiModel',
+];
+
+/** 新增的扩展列默认不显示，保持原有首屏清爽；用户可在列设置里打开。 */
+export const DEFAULT_HIDDEN_DASHBOARD_COLUMNS = [
+  'companyType',
+  'jobType',
+  'education',
+  'experience',
+  'headcount',
+  'deadline',
+  'contact',
+  'skills',
+  'summary',
+  'notes',
+  'updatedAt',
+  'statusChanges',
+  'sourceUrl',
+  'pageTitle',
+  'aiModel',
+];
+
+/** 可选列的默认宽度（px）；用户拖拽后的值保存在 dashboardColumnWidths。 */
+export const DASHBOARD_COLUMN_WIDTHS = {
+  createdAt: 108,
+  location: 104,
+  salary: 96,
+  status: 118,
+  appliedAt: 116,
+  source: 92,
+  nextAction: 150,
+  companyType: 90,
+  jobType: 100,
+  education: 100,
+  experience: 100,
+  headcount: 80,
+  deadline: 110,
+  contact: 130,
+  skills: 180,
+  summary: 200,
+  notes: 180,
+  updatedAt: 108,
+  statusChanges: 90,
+  sourceUrl: 140,
+  pageTitle: 180,
+  aiModel: 120,
+};
+
+export const DEFAULT_DASHBOARD_COLUMNS = {
+  order: [...DASHBOARD_COLUMN_IDS],
+  hidden: [...DEFAULT_HIDDEN_DASHBOARD_COLUMNS],
+};
+
+/** 过滤未知/重复列，补齐新增列；老配置里的新增列默认隐藏。 */
+export function normalizeDashboardColumns(value) {
+  const known = new Set(DASHBOARD_COLUMN_IDS);
+  const sourceOrder = Array.isArray(value?.order) ? value.order : [];
+  const sourceHidden = new Set(Array.isArray(value?.hidden) ? value.hidden : []);
+  const order = [];
+  for (const id of sourceOrder) {
+    if (known.has(id) && !order.includes(id)) order.push(id);
+  }
+  for (const id of DASHBOARD_COLUMN_IDS) {
+    if (!order.includes(id)) order.push(id);
+  }
+  const hidden = new Set([...sourceHidden].filter((id) => known.has(id)));
+  for (const id of DEFAULT_HIDDEN_DASHBOARD_COLUMNS) {
+    if (!sourceOrder.includes(id) && !sourceHidden.has(id)) hidden.add(id);
+  }
+  return { order, hidden: [...hidden] };
+}
+
+/** 把用户拖拽的列宽限制在可读范围内；缺失项回退默认。 */
+export function normalizeDashboardColumnWidths(value) {
+  const out = {};
+  for (const id of DASHBOARD_COLUMN_IDS) {
+    const raw = value?.[id];
+    const n = Number(raw);
+    out[id] = raw != null && Number.isFinite(n) ? Math.min(600, Math.max(70, Math.round(n))) : DASHBOARD_COLUMN_WIDTHS[id];
+  }
+  const rawCompany = value?.company;
+  const company = Number(rawCompany);
+  if (rawCompany != null && Number.isFinite(company)) {
+    out.company = Math.min(600, Math.max(160, Math.round(company)));
+  }
+  return out;
+}
+
 export const DEFAULT_PROMPT = `你是求职进度管理助手。请阅读这张招聘信息截图，提取结构化信息。
 只输出一个 JSON 对象，不要输出解释、markdown 代码块或多余文字。
 
@@ -34,6 +145,7 @@ export const DEFAULT_PROMPT = `你是求职进度管理助手。请阅读这张�
 {
   "is_job": true,
   "company": "公司名称",
+  "company_type": "企业性质：央企/国企/私企/其他；仅当截图明确写出时填写，否则空字符串",
   "title": "岗位名称",
   "location": "工作地点",
   "salary": "薪资待遇，原文照抄",
@@ -51,6 +163,7 @@ export const DEFAULT_PROMPT = `你是求职进度管理助手。请阅读这张�
 
 规则：
 - 只提取图片中真实出现的信息，绝对不要编造或推测；图片里没有的字段填空字符串或空数组。
+- company_type 只在截图明确出现企业性质（如“央企”“国企”“民营企业”“外资企业”）时填写；不得根据公司名猜测，无法确定时填空字符串。
 - 截图中若出现多个岗位，只提取最主要的那一个。
 - jd 与 requirements 尽量完整保留原文措辞和换行，不要总结压缩。
 - 如果图片不是招聘信息，is_job 设为 false，其余字段留空。
@@ -80,6 +193,12 @@ export const DEFAULT_SETTINGS = {
 
   // —— 界面 ——
   lastView: 'table',
+  dashboardColumns: {
+    order: [...DASHBOARD_COLUMN_IDS],
+    hidden: [...DEFAULT_HIDDEN_DASHBOARD_COLUMNS],
+  },
+  dashboardColumnWidths: { ...DASHBOARD_COLUMN_WIDTHS },
+  dashboardOverviewExpanded: false,
 };
 
 /** 读取设置，缺失字段用默认值补齐。 */
@@ -91,6 +210,9 @@ export async function getSettings() {
     merged.statuses = DEFAULT_STATUSES;
   }
   if (legacyDefaults && !merged.statuses.some((s) => s.name === merged.defaultStatus)) merged.defaultStatus = '已投递';
+  merged.dashboardColumns = normalizeDashboardColumns(merged.dashboardColumns);
+  merged.dashboardColumnWidths = normalizeDashboardColumnWidths(merged.dashboardColumnWidths);
+  if (typeof merged.dashboardOverviewExpanded !== 'boolean') merged.dashboardOverviewExpanded = false;
   return merged;
 }
 
